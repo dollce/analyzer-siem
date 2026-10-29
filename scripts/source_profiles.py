@@ -78,20 +78,45 @@ def create_source_folders(root, profiles):
 
 def describe_profiles(profiles, name=None, as_json=False):
     if name is not None and name not in profiles:
-        raise ValueError(f'Unknown source profile: {name}. Run builder.py sources for available folders.')
+        raise ValueError(f'등록되지 않은 소스: {name}. python3 builder.py sources로 사용 가능한 폴더를 확인하세요.')
     selected = {name: profiles[name]} if name is not None else profiles
     if as_json:
         return json.dumps({'version': 1, 'profiles': selected}, ensure_ascii=False, indent=2)
-    lines = ['Source folders → lab indices (ECS fields still determine rule matches)']
+    lines = [
+        'sources는 필수 단계가 아닌 조회용 명령입니다.',
+        '등록된 폴더·출력 인덱스·ECS 필드 안내를 확인합니다. 폴더명을 이미 알고 있다면 실행하지 않아도 됩니다.',
+        '이 명령은 폴더 생성, SIEM 기동, 로그 주입, 탐지 테스트를 실행하지 않습니다.',
+        '',
+        '폴더·인덱스·쿼리의 관계',
+        '  1. logs/<소스>/ 폴더가 로그를 저장할 출력 인덱스를 정합니다.',
+        '  2. 룰의 Index patterns에 그 인덱스가 포함되어야 검색 대상이 됩니다.',
+        '  3. Custom query는 로그의 실제 ECS 필드 값을 검사합니다. 인덱스가 맞아도 쿼리 조건을 충족해야 합니다.',
+        '  폴더명만으로 쿼리에 필요한 필드 값을 채우거나 탐지 성공을 보장하지 않습니다.',
+        '',
+        '사용 예시',
+        '  python3 builder.py sources                       # 전체 소스 조회',
+        '  python3 builder.py sources cloud_defend.alerts   # 특정 소스 조회',
+        '  python3 builder.py sources --json                # 스크립트용 순수 JSON 출력',
+        '  python3 builder.py sources --help                # 명령 문법 확인',
+        '',
+        '등록된 소스 안내',
+    ]
     for key, profile in selected.items():
-        lines.append(f"\nlogs/{key}/ → {profile['index_prefix']}-YYYY.MM.dd")
-        lines.append(f"  live-logs/{key}/ uses the same route; {profile['description']}")
-        lines.append('  Rule index examples: ' + ', '.join(profile['rule_index_patterns']))
-        lines.append('  Fields to inspect (rule-specific requirements may add more): ' + ', '.join(profile['required_fields']))
+        lines.append(f"\n{key}: {profile['description']}")
+        lines.append(f"  완료 파일: logs/{key}/ → {profile['index_prefix']}-YYYY.MM.dd")
+        lines.append(f"  추가 기록 파일: live-logs/{key}/ → 같은 출력 인덱스")
+        lines.append('  룰의 Index patterns 예: ' + ', '.join(profile['rule_index_patterns']))
+        lines.append('  확인할 ECS 필드: ' + ', '.join(profile['required_fields']))
         if 'example_query' in profile:
             query = profile['example_query']
-            lines.append(f"  Example {query['language']}: {query['query']}")
-    lines += ['', 'Folders route data; they do not install integrations or turn text into product-specific ECS events.',
-              'Root files and unknown folders use logs-lab-*. Original @timestamp is retained.',
-              'Run builder.py init to create empty source folders. See docs/detection-testing.md.']
+            language = {'kuery': 'KQL', 'lucene': 'Lucene', 'eql': 'EQL'}[query['language']]
+            lines.append(f"  Custom query 예 ({language}): {query['query']}")
+    lines += [
+        '',
+        '필드 목록과 쿼리는 준비를 위한 안내입니다. 실제 룰의 전체 조건과 검색 시간 범위도 확인하세요.',
+        '폴더 설정은 통합 패키지를 설치하거나 일반 텍스트를 제품별 ECS 이벤트로 변환하지 않습니다.',
+        'logs/ 바로 아래 파일과 미등록 폴더는 logs-lab-*로 수집하며, 원본 @timestamp는 보존합니다.',
+        '빈 폴더 준비: python3 builder.py init / SIEM 실행: python3 builder.py up (Trial 선택 시 up --trial)',
+        '실제 매칭 확인: Kibana 검색·Rule Preview. 자세한 절차: docs/detection-testing.md',
+    ]
     return '\n'.join(lines)

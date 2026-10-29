@@ -96,8 +96,8 @@ class SourceProfileTests(unittest.TestCase):
         self.assertIn('logs/cloud_defend.alerts/', text)
         self.assertIn('logs-cloud_defend.alerts-lab-YYYY.MM.dd', text)
         self.assertIn('event.kind:alert and event.module:cloud_defend', text)
-        self.assertIn('do not install integrations', text)
-        with self.assertRaisesRegex(ValueError, 'Unknown source profile'):
+        self.assertIn('통합 패키지를 설치하거나', text)
+        with self.assertRaisesRegex(ValueError, '등록되지 않은 소스'):
             describe_profiles(self.data['profiles'], 'missing')
 
 
