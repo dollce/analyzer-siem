@@ -51,7 +51,9 @@ def filter(event)
     event.set('[lab][unmapped][message]', value)
     event.set('message', original.is_a?(String) ? original : JSON.generate(value))
   end
-  event.set('[event][original]', original) if original.is_a?(String)
+  if event.get('[event][original]').nil? && original.is_a?(String)
+    event.set('[event][original]', original)
+  end
   event.set('[event][kind]', 'event') unless event.get('[event][kind]')
   event.set('[event][dataset]', 'lab.generic') unless event.get('[event][dataset]')
   event.set('[ecs][version]', '8.11.0') unless event.get('[ecs][version]')
@@ -81,6 +83,16 @@ if respond_to?(:test)
       events[0].get('message').is_a?(String) &&
         events[0].get('[lab][unmapped][message]')['text'] == 'hello' &&
         events[0].get('[lab][unmapped][event]') == 'example'
+    end
+  end
+
+  test 'existing raw evidence survives a normalized Beats message' do
+    in_event do
+      {'message' => 'Failed login for alice', 'event' => {'original' => 'Oct 29 sshd[123]: failed login from 192.0.2.10'}}
+    end
+    expect('original evidence is not replaced by the normalized message') do |events|
+      events[0].get('[event][original]') == 'Oct 29 sshd[123]: failed login from 192.0.2.10' &&
+        events[0].get('message') == 'Failed login for alice'
     end
   end
 end

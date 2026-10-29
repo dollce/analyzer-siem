@@ -77,6 +77,18 @@ class NormalizeTest < Minitest::Test
     assert_equal 'system.auth', event.get('[event][dataset]')
     assert_nil event.get('[event][original]')
   end
+  def test_beats_raw_evidence_is_not_overwritten_by_normalized_message
+    original = 'Oct 29 sshd[123]: failed login from 192.0.2.10'
+    event = normalize('message' => 'Failed login for alice', 'event' => {'original' => original})
+    assert_equal original, event.get('[event][original]')
+    assert_equal 'Failed login for alice', event.get('message')
+  end
+  def test_json_embedded_original_evidence_is_preserved
+    raw = JSON.generate('message' => 'Failed login for alice', 'event' => {'original' => 'raw source record'})
+    event = normalize('message' => raw)
+    assert_equal 'raw source record', event.get('[event][original]')
+    assert_equal 'Failed login for alice', event.get('message')
+  end
   def test_tags_are_merged
     event = normalize('message' => '{"tags":["source-tag"]}', 'tags' => ['input-tag'])
     assert_equal ['input-tag', 'source-tag'], event.get('tags')

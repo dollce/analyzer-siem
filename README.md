@@ -120,6 +120,8 @@ mv logs/auth.log.partial logs/auth.log
 
 일반 텍스트도 바로 검색할 수 있지만, 모든 제품의 텍스트 로그를 자동으로 ECS로 변환하지는 않는다. 탐지 규칙이 요구하는 필드는 해당 제품용 grok/dissect 또는 JSON 변환을 `config/logstash/pipeline/`에 추가해야 한다. Windows EVTX, 바이너리, CSV, 여러 줄 stack trace는 먼저 줄 단위 텍스트/JSONL로 변환하거나 전용 파서를 추가한다.
 
+ECS JSON이나 Beats 입력에 이미 `event.original`이 있으면 그대로 보존한다. 해당 필드가 없는 경우에만 원본 입력 메시지로 채운다.
+
 계속 append되는 파일은 `live-logs/`에 둔다. 이 경로는 tail 모드로 동작하고, 각 이벤트 끝에 개행이 필요하다. 같은 파일을 양쪽 경로에 넣으면 중복 수집된다.
 
 ### 수집 상태 확인
