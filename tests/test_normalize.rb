@@ -1,32 +1,7 @@
 require 'minitest/autorun'
 require_relative '../config/logstash/normalize'
 
-# Emulates only the documented Event field API; pipeline parsing is checked
-# separately with the actual Logstash image, not inferred from this stub.
-class Event
-  attr_reader :data
-  def initialize(data)
-    @data = data
-  end
-  def path(key)
-    key.start_with?('[') ? key.scan(/\[([^\]]+)\]/).flatten : [key]
-  end
-  def get(key)
-    path(key).reduce(@data) { |value, part| value.is_a?(Hash) ? value[part] : nil }
-  end
-  def set(key, value)
-    parts = path(key)
-    parent = parts[0...-1].reduce(@data) { |hash, part| hash[part] ||= {} }
-    parent[parts[-1]] = value
-  end
-  def remove(key)
-    @data.delete(key)
-  end
-  def tag(value)
-    @data['tags'] ||= []
-    @data['tags'] << value
-  end
-end
+require_relative 'support/logstash_event'
 
 class NormalizeTest < Minitest::Test
   def normalize(data)
@@ -38,7 +13,7 @@ class NormalizeTest < Minitest::Test
     event = normalize('message' => 'sshd: login failed', 'log' => {'file' => {'path' => '/logs/auth.log'}})
     assert_equal 'sshd: login failed', event.get('[event][original]')
     assert_equal '/logs/auth.log', event.get('[log][file][path]')
-    assert_equal 'lab.generic', event.get('[event][dataset]')
+    assert_nil event.get('[event][dataset]') # The profile router assigns the dataset.
   end
   def test_ecs_json_preserves_fields_and_routes_timestamp_to_date_filter
     raw = JSON.generate('@timestamp' => '2026-10-29T00:00:00Z', 'message' => 'login',

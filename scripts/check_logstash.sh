@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 project_dir=$(pwd)
+# Optional alternate registry for isolated compatibility checks, never input logs.
+profile_config=${1:-"$project_dir/config/source-profiles.json"}
 check_dir=$(mktemp -d)
 trap 'rm -rf "$check_dir"' EXIT
 stack_version=$(python3 -c 'import builder; print(builder.init()["STACK_VERSION"])')
@@ -16,6 +18,8 @@ docker run --rm --network none --memory 1g \
   -v "$project_dir/config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro" \
   -v "$project_dir/config/logstash/pipeline:/usr/share/logstash/pipeline:ro" \
   -v "$project_dir/config/logstash/normalize.rb:/usr/share/logstash/config/normalize.rb:ro" \
+  -v "$project_dir/config/logstash/route.rb:/usr/share/logstash/config/route.rb:ro" \
+  -v "$profile_config:/usr/share/logstash/config/source-profiles.json:ro" \
   -v "$check_dir/ca.crt:/usr/share/logstash/config/certs/ca/ca.crt:ro" \
   docker.elastic.co/logstash/logstash:"$stack_version" \
   --config.test_and_exit --path.data /tmp/config-check-data

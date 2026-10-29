@@ -6,6 +6,7 @@ x-client: &client
   volumes:
     - ./scripts:/scripts:ro
     - ./config/elasticsearch:/config/elasticsearch:ro
+    - ./config/source-profiles.json:/config/source-profiles.json:ro
     - ./.cache/elastic-labs:/labs:ro
     - certs:/certs:ro
   environment: &client-env
@@ -137,6 +138,8 @@ services:
       - ./config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
       - ./config/logstash/pipeline:/usr/share/logstash/pipeline:ro
       - ./config/logstash/normalize.rb:/usr/share/logstash/config/normalize.rb:ro
+      - ./config/logstash/route.rb:/usr/share/logstash/config/route.rb:ro
+      - ./config/source-profiles.json:/usr/share/logstash/config/source-profiles.json:ro
       - ./logs:/logs:ro
       - ./live-logs:/live-logs:ro
       - lsdata:/usr/share/logstash/data

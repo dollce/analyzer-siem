@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "profiles": {
+    "generic": {
+      "description": "일반 텍스트 / 별도 프로필이 없는 ECS 로그",
+      "index_prefix": "logs-lab",
+      "dataset": "lab.generic",
+      "rule_index_patterns": [
+        "logs-lab-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "message"
+      ]
+    },
+    "cloud_defend.alerts": {
+      "description": "Elastic Defend for Containers alert ECS",
+      "index_prefix": "logs-cloud_defend.alerts-lab",
+      "dataset": "cloud_defend.alerts",
+      "rule_index_patterns": [
+        "logs-cloud_defend.alerts-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.kind",
+        "event.module"
+      ],
+      "example_query": {
+        "language": "kuery",
+        "query": "event.kind:alert and event.module:cloud_defend"
+      }
+    },
+    "cloud_defend.events.process": {
+      "description": "Elastic Defend for Containers process ECS",
+      "index_prefix": "logs-cloud_defend.events.process-lab",
+      "dataset": "cloud_defend.events.process",
+      "rule_index_patterns": [
+        "logs-cloud_defend.events.process-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.type",
+        "process.name"
+      ]
+    },
+    "cloud_defend.events.file": {
+      "description": "Elastic Defend for Containers file ECS",
+      "index_prefix": "logs-cloud_defend.events.file-lab",
+      "dataset": "cloud_defend.events.file",
+      "rule_index_patterns": [
+        "logs-cloud_defend.events.file-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.type",
+        "file.path"
+      ]
+    },
+    "endpoint.events.process": {
+      "description": "Elastic Defend process ECS",
+      "index_prefix": "logs-endpoint.events.process-lab",
+      "dataset": "endpoint.events.process",
+      "rule_index_patterns": [
+        "logs-endpoint.events.process-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.type",
+        "process.name",
+        "process.entity_id"
+      ]
+    },
+    "endpoint.events.network": {
+      "description": "Elastic Defend network ECS",
+      "index_prefix": "logs-endpoint.events.network-lab",
+      "dataset": "endpoint.events.network",
+      "rule_index_patterns": [
+        "logs-endpoint.events.network-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.type",
+        "source.ip",
+        "destination.ip"
+      ]
+    },
+    "endpoint.events.file": {
+      "description": "Elastic Defend file ECS",
+      "index_prefix": "logs-endpoint.events.file-lab",
+      "dataset": "endpoint.events.file",
+      "rule_index_patterns": [
+        "logs-endpoint.events.file-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.type",
+        "file.path"
+      ]
+    },
+    "endpoint.events.registry": {
+      "description": "Elastic Defend registry ECS",
+      "index_prefix": "logs-endpoint.events.registry-lab",
+      "dataset": "endpoint.events.registry",
+      "rule_index_patterns": [
+        "logs-endpoint.events.registry-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.type",
+        "registry.path"
+      ]
+    },
+    "windows.sysmon_operational": {
+      "description": "Sysmon Operational ECS (EVTX 변환 필요)",
+      "index_prefix": "logs-windows.sysmon_operational-lab",
+      "dataset": "windows.sysmon_operational",
+      "rule_index_patterns": [
+        "logs-windows.sysmon_operational-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.code",
+        "host.name"
+      ]
+    },
+    "system.security": {
+      "description": "Windows Security ECS (EVTX 변환 필요)",
+      "index_prefix": "logs-system.security-lab",
+      "dataset": "system.security",
+      "rule_index_patterns": [
+        "logs-system.security-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.code",
+        "host.name"
+      ]
+    },
+    "system.auth": {
+      "description": "Linux 인증 ECS (raw auth.log 파서 별도)",
+      "index_prefix": "logs-system.auth-lab",
+      "dataset": "system.auth",
+      "rule_index_patterns": [
+        "logs-system.auth-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.outcome",
+        "host.name"
+      ]
+    },
+    "auditd_manager.auditd": {
+      "description": "Auditd Manager ECS",
+      "index_prefix": "logs-auditd_manager.auditd-lab",
+      "dataset": "auditd_manager.auditd",
+      "rule_index_patterns": [
+        "logs-auditd_manager.auditd-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.category",
+        "event.action",
+        "host.name"
+      ]
+    },
+    "aws.cloudtrail": {
+      "description": "AWS CloudTrail ECS (원본 JSON 변환 필요)",
+      "index_prefix": "logs-aws.cloudtrail-lab",
+      "dataset": "aws.cloudtrail",
+      "rule_index_patterns": [
+        "logs-aws.cloudtrail-*"
+      ],
+      "required_fields": [
+        "@timestamp",
+        "event.provider",
+        "event.action",
+        "event.outcome"
+      ]
+    }
+  }
+}

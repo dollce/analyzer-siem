@@ -88,7 +88,11 @@ class BootstrapTest(unittest.TestCase):
         bootstrap.auth_setup(es, "kibana-test", "logstash-test")
         role = next(call[2] for call in es.calls if call[1].startswith("/_security/role/"))
         self.assertEqual(role["cluster"], ["monitor"])
-        self.assertEqual(role["indices"][0]["names"], ["logs-lab-*"])
+        expected = bootstrap.profile_patterns(ROOT / "config/source-profiles.json")
+        self.assertEqual(role["indices"][0]["names"], expected)
+        self.assertIn("logs-lab-*", expected)
+        self.assertIn("logs-cloud_defend.alerts-lab-*", expected)
+        self.assertNotIn("logs-*", expected)
         self.assertIn("auto_configure", role["indices"][0]["privileges"])
         user = next(call[2] for call in es.calls if call[1] == "/_security/user/logstash_internal")
         self.assertEqual(user["roles"], ["lab_logstash_writer"])
@@ -112,9 +116,70 @@ class BootstrapTest(unittest.TestCase):
         paths = [call[1] for call in es.calls]
         self.assertLess(paths.index("/_ingest/pipeline/lab-ingest"), paths.index("/_index_template/logs-lab"))
         self.assertEqual(result["license"], "basic")
-        data_view = next(call[2] for call in kibana.calls if call[1] == "/api/data_views/data_view")
-        self.assertEqual(data_view["data_view"]["title"], "logs-lab-*")
-        self.assertTrue(data_view["data_view"]["allowNoIndex"])
+        patterns = bootstrap.profile_patterns(ROOT / "config/source-profiles.json")
+        template = next(call[2] for call in es.calls if call[1] == "/_index_template/logs-lab")
+        self.assertEqual(template["index_patterns"], patterns)
+        data_views = [call[2] for call in kibana.calls if call[1] == "/api/data_views/data_view"]
+        self.assertEqual(len(data_views), 2)
+        for view in data_views:
+            self.assertEqual(view["data_view"]["title"].split(","), patterns)
+            self.assertTrue(view["data_view"]["allowNoIndex"])
+            self.assertTrue(view["override"])
+        self.assertEqual([(view["data_view"]["id"], view["data_view"]["timeFieldName"]) for view in data_views],
+                         [("lab-logs", "@timestamp"), ("lab-logs-ingested", "event.ingested")])
+        default = next(call[2] for call in kibana.calls if call[1] == "/api/data_views/default")
+        self.assertEqual(default["data_view_id"], "lab-logs")
+        self.assertEqual(result["ingest_data_view"], "lab-logs-ingested")
+
+    def test_invalid_profiles_fail_before_auth_or_configure_remote_access(self):
+        profiles = self.labs / "source-profiles.json"
+        for value in ({"version": 1, "profiles": {}}, {"version": 99, "profiles": {}}, "malformed"):
+            profiles.write_text(json.dumps(value))
+            for phase in ("auth", "configure"):
+                with self.subTest(value=value, phase=phase):
+                    es, kibana = FakeAPI(), FakeAPI()
+                    with self.assertRaisesRegex(bootstrap.SetupError, "Invalid source profiles"):
+                        if phase == "auth":
+                            bootstrap.auth_setup(es, "kibana-test", "logstash-test",
+                                                 license_mode="trial", profiles_path=profiles)
+                        else:
+                            self.configure(es, kibana, license_mode="trial", profiles_path=profiles)
+                    self.assertEqual(es.calls + kibana.calls, [])
+
+    def test_missing_profiles_fail_before_trial_activation(self):
+        es = FakeAPI()
+        with self.assertRaisesRegex(bootstrap.SetupError, "Invalid source profiles"):
+            bootstrap.auth_setup(es, "kibana-test", "logstash-test", license_mode="trial",
+                                 profiles_path=self.labs / "missing.json")
+        self.assertEqual(es.calls, [])
+
+    def test_auth_and_template_and_views_use_same_custom_profile_set(self):
+        document = bootstrap.read_json(ROOT / "config/source-profiles.json")
+        document["profiles"] = {name: document["profiles"][name]
+                                for name in ("generic", "cloud_defend.alerts")}
+        path = self.labs / "source-profiles.json"
+        path.write_text(json.dumps(document))
+        es, kibana = FakeAPI(), FakeAPI()
+        bootstrap.auth_setup(es, "kibana-test", "logstash-test", profiles_path=path)
+        self.configure(es, kibana, profiles_path=path)
+        expected = ["logs-lab-*", "logs-cloud_defend.alerts-lab-*"]
+        role = next(call[2] for call in es.calls if call[1] == "/_security/role/lab_logstash_writer")
+        template = next(call[2] for call in es.calls if call[1] == "/_index_template/logs-lab")
+        self.assertEqual(role["indices"][0]["names"], expected)
+        self.assertEqual(template["index_patterns"], expected)
+        for call in kibana.calls:
+            if call[1] == "/api/data_views/data_view":
+                self.assertEqual(call[2]["data_view"]["title"], ",".join(expected))
+        # Bootstrap creates no ordinary log indices or events to hide empty-index warnings.
+        self.assertFalse(any(call[1].startswith("/logs-") or call[1].endswith("/_doc") for call in es.calls))
+
+    def test_bad_data_view_response_does_not_set_default_or_configure_rules(self):
+        kibana = FakeAPI()
+        kibana.overrides[("POST", "/api/data_views/data_view")] = {"data_view": {"id": "unexpected"}}
+        with self.assertRaisesRegex(bootstrap.SetupError, "expected data view ID"):
+            self.configure(kibana=kibana)
+        self.assertFalse(any(call[1] == "/api/data_views/default" or "/api/detection_engine/" in call[1]
+                             for call in kibana.calls))
 
     def test_trial_is_refused_before_any_remote_mutation(self):
         es, kibana = FakeAPI(license_type="trial"), FakeAPI()
@@ -270,6 +335,8 @@ with (root / '.sync.lock').open('rb') as lock:
         self.assertEqual(properties["event"]["properties"]["ingested"]["type"], "date")
         self.assertFalse(properties["event"]["properties"]["original"]["index"])
         self.assertEqual(properties["lab"]["properties"]["unmapped"]["type"], "flattened")
+        self.assertEqual(properties["lab"]["properties"]["source_profile"]["type"], "keyword")
+        self.assertEqual(properties["lab"]["properties"]["input_path"]["type"], "keyword")
 
 
 class TrialLicenseTest(unittest.TestCase):

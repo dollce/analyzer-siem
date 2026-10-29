@@ -23,6 +23,17 @@ import time
 import urllib.error
 import urllib.request
 
+try:
+    from scripts.source_profiles import index_patterns, load_profiles
+except ModuleNotFoundError as error:
+    if error.name not in ("scripts", "scripts.source_profiles"):
+        raise
+    # Direct execution in the helper container puts /scripts on sys.path.
+    from source_profiles import index_patterns, load_profiles
+
+
+DEFAULT_PROFILES = Path(__file__).resolve().parents[1] / "config/source-profiles.json"
+
 
 class SetupError(RuntimeError):
     pass
@@ -160,15 +171,23 @@ def ensure_license(es: API, license_mode: str = "basic") -> dict:
             "license_expiry_date": expires_utc}
 
 
+def profile_patterns(profiles_path: Path) -> list[str]:
+    try:
+        return index_patterns(load_profiles(profiles_path))
+    except (ValueError, OSError) as error:
+        raise SetupError(f"Invalid source profiles: {error}") from None
+
+
 def auth_setup(es: API, kibana_password: str, logstash_password: str,
-               *, license_mode: str = "basic") -> dict:
+               *, license_mode: str = "basic", profiles_path: Path = DEFAULT_PROFILES) -> dict:
+    patterns = profile_patterns(profiles_path)
     wait_ready(es, "/_cluster/health?wait_for_status=yellow&timeout=5s",
                predicate=lambda value: value.get("status") in ("yellow", "green") and not value.get("timed_out"))
     license_info = ensure_license(es, license_mode)
     es.request("POST", "/_security/user/kibana_system/_password", {"password": kibana_password})
     es.request("PUT", "/_security/role/lab_logstash_writer", {
         "cluster": ["monitor"],
-        "indices": [{"names": ["logs-lab-*"],
+        "indices": [{"names": patterns,
                      "privileges": ["write", "create_doc", "create_index", "auto_configure", "view_index_metadata"]}],
     })
     es.request("PUT", "/_security/user/logstash_internal", {
@@ -234,8 +253,10 @@ def catalog_markdown(manifest: dict, catalog: dict) -> str:
             "이 카탈로그는 시작 시 동기화한 공식 elastic-labs 예제를 반영합니다.",
             "예제 코드는 자동 실행하지 않습니다. 각 예제의 사전 조건을 확인하세요.",
             "일부 AI, ML, 클라우드 예제에는 유료 기능 또는 별도 서비스가 필요합니다.", "",
-            "실제 로그: 호스트의 `logs/` → Logstash → `logs-lab-*`.",
-            "Discover에서 Lab logs 데이터 뷰를 선택하고 원본 이벤트 시간에 맞게 시간 범위를 조정하세요.", ""]
+            "실제 로그: 호스트의 `logs/<source>/` → Logstash → 해당 source의 분석용 인덱스.",
+            "호스트에서 `python3 builder.py sources`로 폴더와 대상 인덱스를 확인하세요.",
+            "Discover의 Lab logs는 원본 이벤트 시간, Lab logs — ingest time은 수집 시간으로 조회합니다.",
+            "데이터 소스 폴더는 인덱스만 선택합니다. 탐지 규칙의 필드·쿼리·시간 조건도 충족해야 합니다.", ""]
     for category, label in [("security", "Security"), ("observability", "Observability"),
                             ("search-and-ai", "Search and AI")]:
         entries = [entry for entry in catalog["entries"] if entry.get("category") == category]
@@ -283,13 +304,16 @@ def install_catalog(kibana: API, manifest: dict, catalog: dict) -> None:
 
 
 def configure(es: API, kibana: API, config_dir: Path, labs_dir: Path,
-              *, prebuilt_rules: bool = True, license_mode: str = "basic") -> dict:
+              *, prebuilt_rules: bool = True, license_mode: str = "basic",
+              profiles_path: Path = DEFAULT_PROFILES) -> dict:
     if license_mode not in ("basic", "trial"):
         raise SetupError("LICENSE_MODE must be basic or trial")
     # Validate local inputs before any remote configuration mutation.
+    patterns = profile_patterns(profiles_path)
     manifest, catalog = load_catalog(labs_dir)
     pipeline = read_json(config_dir / "lab-ingest.json")
     template = read_json(config_dir / "logs-lab-template.json")
+    template["index_patterns"] = patterns
     wait_ready(es, "/_cluster/health?wait_for_status=yellow&timeout=5s",
                predicate=lambda value: value.get("status") in ("yellow", "green") and not value.get("timed_out"))
     license_info = ensure_license(es, license_mode)
@@ -297,14 +321,18 @@ def configure(es: API, kibana: API, config_dir: Path, labs_dir: Path,
                predicate=lambda value: value.get("status", {}).get("overall", {}).get("level") == "available")
     require_ack(es.request("PUT", "/_ingest/pipeline/lab-ingest", pipeline), "Ingest pipeline")
     require_ack(es.request("PUT", "/_index_template/logs-lab", template), "Index template")
-    view = kibana.request("POST", "/api/data_views/data_view", {
-        "data_view": {"id": "lab-logs", "title": "logs-lab-*", "name": "Lab logs",
-                      "timeFieldName": "@timestamp", "allowNoIndex": True},
-        "override": True,
-    })
-    view_id = view.get("data_view", {}).get("id")
-    if not view_id:
-        raise SetupError("Kibana did not return the lab data view ID")
+    for view_id, name, time_field in (
+        ("lab-logs", "Lab logs", "@timestamp"),
+        ("lab-logs-ingested", "Lab logs — ingest time", "event.ingested"),
+    ):
+        view = kibana.request("POST", "/api/data_views/data_view", {
+            "data_view": {"id": view_id, "title": ",".join(patterns), "name": name,
+                          "timeFieldName": time_field, "allowNoIndex": True},
+            "override": True,
+        })
+        if view.get("data_view", {}).get("id") != view_id:
+            raise SetupError(f"Kibana did not return the expected data view ID: {view_id}")
+    view_id = "lab-logs"
     require_ack(kibana.request("POST", "/api/data_views/default", {"data_view_id": view_id, "force": True}),
                 "Default data view")
     index = kibana.request("GET", "/api/detection_engine/index", allow_status=(404,))
@@ -320,7 +348,8 @@ def configure(es: API, kibana: API, config_dir: Path, labs_dir: Path,
             raise SetupError("Prebuilt-rule API did not confirm installation counts")
         rules = {field: rules[field] for field in fields}
     install_catalog(kibana, manifest, catalog)
-    return {**license_info, "data_view": view_id, "labs_revision": manifest["revision"],
+    return {**license_info, "data_view": view_id, "ingest_data_view": "lab-logs-ingested",
+            "labs_revision": manifest["revision"],
             "labs_examples": len(catalog["entries"]), "prebuilt_rules": rules,
             "dashboard": "/app/dashboards#/view/elastic-labs-catalog"}
 
@@ -337,6 +366,7 @@ def main() -> int:
     parser.add_argument("phase", choices=("auth", "configure"))
     parser.add_argument("--config-dir", type=Path, default=Path("/config/elasticsearch"))
     parser.add_argument("--labs-dir", type=Path, default=Path("/labs"))
+    parser.add_argument("--profiles", type=Path, default=Path("/config/source-profiles.json"))
     args = parser.parse_args()
     try:
         es_url = os.environ.get("ES_URL", "https://elasticsearch:9200")
@@ -349,7 +379,7 @@ def main() -> int:
         es = API(es_url, password, os.environ.get("CA_CERT", "/certs/ca/ca.crt"), timeout=120)
         if args.phase == "auth":
             license_info = auth_setup(es, required_env("KIBANA_PASSWORD"), required_env("LOGSTASH_PASSWORD"),
-                                      license_mode=license_mode)
+                                      license_mode=license_mode, profiles_path=args.profiles)
             print(json.dumps({"service_credentials": "configured", **license_info}, ensure_ascii=False))
         else:
             prebuilt = os.environ.get("PREBUILT_RULES", "true").lower()
@@ -357,7 +387,8 @@ def main() -> int:
                 raise SetupError("PREBUILT_RULES must be true or false")
             kibana = API(os.environ.get("KIBANA_URL", "http://kibana:5601"), password, timeout=300)
             print(json.dumps(configure(es, kibana, args.config_dir, args.labs_dir,
-                                       prebuilt_rules=prebuilt == "true", license_mode=license_mode), ensure_ascii=False))
+                                       prebuilt_rules=prebuilt == "true", license_mode=license_mode,
+                                       profiles_path=args.profiles), ensure_ascii=False))
     except (SetupError, OSError, ConnectionError, TimeoutError) as error:
         print(f"Bootstrap failed: {error}", file=sys.stderr)
         return 1
