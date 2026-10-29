@@ -1,4 +1,5 @@
 import importlib.util
+from fnmatch import fnmatchcase
 from concurrent.futures import ThreadPoolExecutor
 import io
 import json
@@ -64,6 +65,8 @@ class BootstrapTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.labs = Path(self.temp.name)
+        self.cases = self.labs / "cases.json"
+        self.cases.write_text('{"version":1,"cases":[]}')
         (self.labs / ".sync.lock").touch(mode=0o600)
         self.revision = "a" * 40
         self.manifest = {"schema_version": 1, "repository": "https://github.com/elastic/elastic-labs",
@@ -80,12 +83,17 @@ class BootstrapTest(unittest.TestCase):
         (self.labs / "catalog.json").write_text(json.dumps(self.catalog))
 
     def configure(self, es=None, kibana=None, **kwargs):
+        kwargs.setdefault("cases_path", self.cases)
         return bootstrap.configure(es or FakeAPI(), kibana or FakeAPI(),
                                    ROOT / "config/elasticsearch", self.labs, **kwargs)
 
+    def auth_setup(self, es, *args, **kwargs):
+        kwargs.setdefault("cases_path", self.cases)
+        return bootstrap.auth_setup(es, *args, **kwargs)
+
     def test_auth_role_is_scoped_to_lab_indices_and_no_superuser(self):
         es = FakeAPI()
-        bootstrap.auth_setup(es, "kibana-test", "logstash-test")
+        self.auth_setup(es, "kibana-test", "logstash-test")
         role = next(call[2] for call in es.calls if call[1].startswith("/_security/role/"))
         self.assertEqual(role["cluster"], ["monitor"])
         expected = bootstrap.profile_patterns(ROOT / "config/source-profiles.json")
@@ -140,7 +148,7 @@ class BootstrapTest(unittest.TestCase):
                     es, kibana = FakeAPI(), FakeAPI()
                     with self.assertRaisesRegex(bootstrap.SetupError, "Invalid source profiles"):
                         if phase == "auth":
-                            bootstrap.auth_setup(es, "kibana-test", "logstash-test",
+                            self.auth_setup(es, "kibana-test", "logstash-test",
                                                  license_mode="trial", profiles_path=profiles)
                         else:
                             self.configure(es, kibana, license_mode="trial", profiles_path=profiles)
@@ -149,7 +157,7 @@ class BootstrapTest(unittest.TestCase):
     def test_missing_profiles_fail_before_trial_activation(self):
         es = FakeAPI()
         with self.assertRaisesRegex(bootstrap.SetupError, "Invalid source profiles"):
-            bootstrap.auth_setup(es, "kibana-test", "logstash-test", license_mode="trial",
+            self.auth_setup(es, "kibana-test", "logstash-test", license_mode="trial",
                                  profiles_path=self.labs / "missing.json")
         self.assertEqual(es.calls, [])
 
@@ -160,7 +168,7 @@ class BootstrapTest(unittest.TestCase):
         path = self.labs / "source-profiles.json"
         path.write_text(json.dumps(document))
         es, kibana = FakeAPI(), FakeAPI()
-        bootstrap.auth_setup(es, "kibana-test", "logstash-test", profiles_path=path)
+        self.auth_setup(es, "kibana-test", "logstash-test", profiles_path=path)
         self.configure(es, kibana, profiles_path=path)
         expected = ["logs-lab-*", "logs-cloud_defend.alerts-lab-*"]
         role = next(call[2] for call in es.calls if call[1] == "/_security/role/lab_logstash_writer")
@@ -181,6 +189,89 @@ class BootstrapTest(unittest.TestCase):
         self.assertFalse(any(call[1] == "/api/data_views/default" or "/api/detection_engine/" in call[1]
                              for call in kibana.calls))
 
+    def test_invalid_cases_fail_before_auth_or_trial_activation(self):
+        for value in (
+            {"version": 1, "cases": ["incident001", "incident001"]},
+            {"version": 1, "cases": ["generic"]},
+            {"version": 1, "cases": ["incident*"]},
+            {"version": 1, "cases": ["../incident"]},
+            {"version": 1, "cases": "incident001"},
+            {"version": True, "cases": []},
+        ):
+            self.cases.write_text(json.dumps(value))
+            for phase in ("auth", "configure"):
+                with self.subTest(value=value, phase=phase):
+                    es, kibana = FakeAPI(), FakeAPI()
+                    with self.assertRaisesRegex(bootstrap.SetupError, "Invalid case registry"):
+                        if phase == "auth":
+                            self.auth_setup(es, "kibana-test", "logstash-test", license_mode="trial")
+                        else:
+                            self.configure(es, kibana, license_mode="trial")
+                    self.assertEqual(es.calls + kibana.calls, [])
+
+    def test_missing_case_registry_keeps_legacy_views(self):
+        self.cases.unlink()
+        es, kibana = FakeAPI(), FakeAPI()
+        self.auth_setup(es, "kibana-test", "logstash-test")
+        result = self.configure(es, kibana)
+        views = [call[2]["data_view"] for call in kibana.calls if call[1] == "/api/data_views/data_view"]
+        self.assertEqual([view["id"] for view in views], ["lab-logs", "lab-logs-ingested"])
+        self.assertEqual(result["case_views"], {})
+
+    def test_cases_use_exact_patterns_and_keep_global_default_and_writer_permissions(self):
+        self.cases.write_text(json.dumps({"version": 1, "cases": ["incident001", "incident001_a"]}))
+        es, kibana = FakeAPI(), FakeAPI()
+        self.auth_setup(es, "kibana-test", "logstash-test")
+        result = self.configure(es, kibana, prebuilt_rules=False)
+        views = {call[2]["data_view"]["id"]: call[2]["data_view"]
+                 for call in kibana.calls if call[1] == "/api/data_views/data_view"}
+        self.assertEqual(set(views), {
+            "lab-logs", "lab-logs-ingested", "lab-case-incident001", "lab-case-incident001-ingested",
+            "lab-case-incident001_a", "lab-case-incident001_a-ingested",
+        })
+        for case_name in ("incident001", "incident001_a"):
+            view = views[f"lab-case-{case_name}"]
+            ingest_view = views[f"lab-case-{case_name}-ingested"]
+            patterns = view["title"].split(",")
+            self.assertIn(f"logs-lab-case_{case_name}-*", patterns)
+            self.assertIn(f"logs-cloud_defend.alerts-lab-case_{case_name}-*", patterns)
+            self.assertEqual(view["timeFieldName"], "@timestamp")
+            self.assertEqual(ingest_view["timeFieldName"], "event.ingested")
+            self.assertEqual(view["title"], ingest_view["title"])
+            self.assertEqual(view["name"], f"Case {case_name}")
+            self.assertEqual(ingest_view["name"], f"Case {case_name} — ingest time")
+            self.assertTrue(view["allowNoIndex"])
+            other_case = "incident001_a" if case_name == "incident001" else "incident001"
+            for prefix in ("logs-lab", "logs-cloud_defend.alerts-lab"):
+                self.assertTrue(any(fnmatchcase(f"{prefix}-case_{case_name}-2026.10.29", pattern) for pattern in patterns))
+                self.assertFalse(any(fnmatchcase(f"{prefix}-case_{other_case}-2026.10.29", pattern) for pattern in patterns))
+                self.assertFalse(any(fnmatchcase(f"{prefix}-2026.10.29", pattern) for pattern in patterns))
+            self.assertEqual(result["case_views"][case_name], {
+                "data_view": f"lab-case-{case_name}", "ingest_data_view": f"lab-case-{case_name}-ingested",
+            })
+        expected = bootstrap.profile_patterns(ROOT / "config/source-profiles.json")
+        role = next(call[2] for call in es.calls if call[1] == "/_security/role/lab_logstash_writer")
+        template = next(call[2] for call in es.calls if call[1] == "/_index_template/logs-lab")
+        self.assertEqual(role["indices"][0]["names"], expected)
+        self.assertEqual(template["index_patterns"], expected)
+        self.assertEqual(views["lab-logs"]["title"].split(","), expected)
+        default = next(call[2] for call in kibana.calls if call[1] == "/api/data_views/default")
+        self.assertEqual(default["data_view_id"], "lab-logs")
+        self.assertFalse(any("/rules/" in call[1] for call in kibana.calls))
+        self.assertFalse(any(call[1].startswith("/logs-") or call[1].endswith("/_doc") for call in es.calls))
+
+    def test_case_views_are_upserted_without_duplicate_ids_or_new_rule_actions(self):
+        self.cases.write_text('{"version":1,"cases":["incident001"]}')
+        es, kibana = FakeAPI(), FakeAPI()
+        first = self.configure(es, kibana, prebuilt_rules=False)
+        second = self.configure(es, kibana, prebuilt_rules=False)
+        self.assertEqual(first, second)
+        views = [call[2] for call in kibana.calls if call[1] == "/api/data_views/data_view"]
+        self.assertEqual(len(views), 8)
+        self.assertEqual(views[:4], views[4:])
+        self.assertTrue(all(view["override"] for view in views))
+        self.assertFalse(any("/rules/" in call[1] or "/_bulk" in call[1] for call in es.calls + kibana.calls))
+
     def test_trial_is_refused_before_any_remote_mutation(self):
         es, kibana = FakeAPI(license_type="trial"), FakeAPI()
         with self.assertRaisesRegex(bootstrap.SetupError, "Basic license"):
@@ -189,7 +280,7 @@ class BootstrapTest(unittest.TestCase):
 
     def test_trial_activation_precedes_service_credentials_and_is_reverified_in_configure(self):
         es, kibana = FakeAPI(), FakeAPI()
-        auth_result = bootstrap.auth_setup(es, "kibana-test", "logstash-test", license_mode="trial")
+        auth_result = self.auth_setup(es, "kibana-test", "logstash-test", license_mode="trial")
         result = self.configure(es, kibana, license_mode="trial")
         paths = [call[1] for call in es.calls]
         self.assertLess(paths.index("/_license/start_trial?acknowledge=true"),
@@ -336,6 +427,7 @@ with (root / '.sync.lock').open('rb') as lock:
         self.assertFalse(properties["event"]["properties"]["original"]["index"])
         self.assertEqual(properties["lab"]["properties"]["unmapped"]["type"], "flattened")
         self.assertEqual(properties["lab"]["properties"]["source_profile"]["type"], "keyword")
+        self.assertEqual(properties["lab"]["properties"]["case_id"]["type"], "keyword")
         self.assertEqual(properties["lab"]["properties"]["input_path"]["type"], "keyword")
 
 

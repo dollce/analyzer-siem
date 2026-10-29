@@ -26,13 +26,16 @@ flowchart LR
 - 로컬 설정 검사에는 Ruby + minitest, Logstash 설정 검사에는 OpenSSL도 필요
 
 ```bash
+python3 builder.py case init --name incident001
 python3 builder.py init
 ```
 
+- `logs/incident001/<source>/`, `live-logs/incident001/<source>/`: case 아래에 등록된 모든 소스의 빈 폴더를 생성
+- `.cases/registry.json`: 로컬 case 등록 정보. Git에서 제외
 - `.env`: 임의 생성한 서비스 비밀번호와 Kibana 암호화 키. Git에서 제외, 최초 생성 권한 `0600`
 - `.state/instances.yml`: 인증서 SAN 입력
-- `logs/<source>/`: 데이터 소스별로 수집할 완료된 파일. 사전 정의된 빈 폴더를 생성
-- `live-logs/<source>/`: 같은 분류로 계속 추가되는 파일
+
+`case init`은 폴더와 case 등록 정보만 준비한다. `.env`·인증서를 만들거나 SIEM을 기동하지 않는다. 같은 이름으로 다시 실행해도 기존 파일은 보존한다. 일반 `init`은 서비스 설정과 기존 방식의 `logs/<source>/`, `live-logs/<source>/` 폴더를 준비한다.
 
 `.env`에서 포트, 메모리, TLS 추가 IP/DNS를 수정할 수 있다. 비밀번호는 최초 생성 값을 유지한다. 데이터 볼륨이 남아 있는 상태에서 `ELASTIC_PASSWORD`만 바꾸면 기존 계정 비밀번호는 변경되지 않는다.
 
@@ -49,7 +52,7 @@ python3 builder.py up
 3. Elasticsearch 시작 및 상태 확인
 4. `kibana_system`, 수집 전용 `logstash_internal` 계정 설정 및 선택한 라이선스 확인·활성화
 5. Kibana 시작 및 상태 확인
-6. 인덱스 템플릿, ingest pipeline, 데이터 뷰, 탐지 엔진 인덱스, 사전 정의 규칙, Labs 대시보드 적용
+6. 인덱스 템플릿, ingest pipeline, 전체·case별 데이터 뷰, 탐지 엔진 인덱스, 사전 정의 규칙, Labs 대시보드 적용
 7. Logstash 시작 및 상태 확인
 8. 호스트에서 CA 검증 연결 및 선택한 라이선스 재확인
 
@@ -86,6 +89,7 @@ Trial은 기능을 사용할 수 있는 라이선스를 제공한다. Elastic Ag
 - `logs-lab-*` 및 소스별 `logs-<source>-lab-*` ECS 중심 인덱스 템플릿, 1 shard / 0 replica
 - `lab-ingest` pipeline: `event.ingested`에 수집 시각 기록
 - 모든 소스를 조회하는 `Lab logs` (`@timestamp`)와 `Lab logs — ingest time` (`event.ingested`) 데이터 뷰. Security 검색 대상에 `logs-*` 포함
+- 등록한 case마다 `Case <case>` (`@timestamp`)와 `Case <case> — ingest time` (`event.ingested`) 데이터 뷰
 - 현재 Stack과 호환되는 최신 prebuilt rules 설치/갱신
 - Logstash의 Elasticsearch 계정은 등록된 소스의 lab 인덱스 패턴에만 쓰기 권한 부여
 
@@ -95,33 +99,47 @@ Trial은 기능을 사용할 수 있는 라이선스를 제공한다. Elastic Ag
 
 완료된 UTF-8 텍스트 파일, NDJSON/JSONL 파일을 `logs/` 아래에 넣으면 하위 디렉터리까지 검색한다. read 모드라 마지막 줄에 개행이 없어도 수집한다. `.gz`로 압축한 줄 단위 로그도 지원한다.
 
-### 데이터 소스별 폴더
+### Case와 소스별 폴더
 
 ```bash
-# 컨테이너 실행 없이 폴더·인덱스·필드 안내 조회
+# 사건 이름만 지정하면 두 입력 경로에 모든 소스의 빈 폴더를 준비한다
+python3 builder.py case init --name incident001
+
+# 선택 사항: 컨테이너 실행 없이 폴더·인덱스·필드 안내 조회
 python3 builder.py sources
 python3 builder.py sources cloud_defend.alerts
-
-# init은 빈 소스 폴더도 생성한다
-python3 builder.py init
 ```
 
-`logs/` 바로 아래의 폴더가 소스를 결정한다. 사건별 폴더는 그 아래에 둔다.
+case 이름은 소문자 영문자로 시작하고 소문자·숫자·밑줄만 사용하며 최대 64자다. 등록된 소스 이름과 같을 수 없고, 최대 128개 case를 등록할 수 있다. 예: `incident001`, `phishing_2026`.
+
+```text
+logs/incident001/
+├── cloud_defend.alerts/
+├── windows.sysmon_operational/
+├── system.auth/
+└── generic/                 # 나머지 등록 소스도 모두 생성
+
+live-logs/incident001/       # 같은 소스별 폴더 구조
+```
+
+새 case를 만들었으면 파일을 넣기 전에 `python3 builder.py up`을 실행한다. 이미 SIEM이 실행 중이어도 `up`을 다시 실행해야 Logstash가 case 등록 정보를 다시 읽고 Kibana에 case별 데이터 뷰가 반영된다. Trial 사용 중이면 `up --trial`을 사용한다. `case init` 자체는 파일을 주입하거나 실행 중인 서비스를 갱신하지 않는다.
 
 | 폴더 | 출력 인덱스 패턴 | 용도 |
 | --- | --- | --- |
-| `logs/cloud_defend.alerts/` | `logs-cloud_defend.alerts-lab-*` | Defend for Containers 경보 |
-| `logs/cloud_defend.events.process/`, `logs/cloud_defend.events.file/` | `logs-cloud_defend.events.<종류>-lab-*` | 컨테이너 프로세스·파일 이벤트 |
-| `logs/endpoint.events.process/`, `logs/endpoint.events.network/` | `logs-endpoint.events.<종류>-lab-*` | Endpoint 프로세스·네트워크 이벤트 |
-| `logs/endpoint.events.file/`, `logs/endpoint.events.registry/` | `logs-endpoint.events.<종류>-lab-*` | Endpoint 파일·레지스트리 이벤트 |
-| `logs/windows.sysmon_operational/` | `logs-windows.sysmon_operational-lab-*` | ECS로 변환한 Sysmon 이벤트 |
-| `logs/system.security/` | `logs-system.security-lab-*` | ECS로 변환한 Windows Security 이벤트 |
-| `logs/system.auth/` | `logs-system.auth-lab-*` | 인증 이벤트 |
-| `logs/auditd_manager.auditd/` | `logs-auditd_manager.auditd-lab-*` | ECS로 변환한 auditd 이벤트 |
-| `logs/aws.cloudtrail/` | `logs-aws.cloudtrail-lab-*` | ECS로 변환한 CloudTrail 이벤트 |
-| `logs/generic/` 또는 `logs/` 바로 아래 | `logs-lab-*` | 일반 로그 / 자체 분석 |
+| `logs/<case>/cloud_defend.alerts/` | `logs-cloud_defend.alerts-lab-case_<case>-*` | Defend for Containers 경보 |
+| `logs/<case>/cloud_defend.events.process/`, `…/cloud_defend.events.file/` | `logs-cloud_defend.events.<종류>-lab-case_<case>-*` | 컨테이너 프로세스·파일 이벤트 |
+| `logs/<case>/endpoint.events.process/`, `…/endpoint.events.network/` | `logs-endpoint.events.<종류>-lab-case_<case>-*` | Endpoint 프로세스·네트워크 이벤트 |
+| `logs/<case>/endpoint.events.file/`, `…/endpoint.events.registry/` | `logs-endpoint.events.<종류>-lab-case_<case>-*` | Endpoint 파일·레지스트리 이벤트 |
+| `logs/<case>/windows.sysmon_operational/` | `logs-windows.sysmon_operational-lab-case_<case>-*` | ECS로 변환한 Sysmon 이벤트 |
+| `logs/<case>/system.security/` | `logs-system.security-lab-case_<case>-*` | ECS로 변환한 Windows Security 이벤트 |
+| `logs/<case>/system.auth/` | `logs-system.auth-lab-case_<case>-*` | 인증 이벤트 |
+| `logs/<case>/auditd_manager.auditd/` | `logs-auditd_manager.auditd-lab-case_<case>-*` | ECS로 변환한 auditd 이벤트 |
+| `logs/<case>/aws.cloudtrail/` | `logs-aws.cloudtrail-lab-case_<case>-*` | ECS로 변환한 CloudTrail 이벤트 |
+| `logs/<case>/generic/` | `logs-lab-case_<case>-*` | 일반 로그 / 자체 분석 |
 
-예를 들어 `logs/cloud_defend.alerts/case-001/alerts.ndjson`은 `logs-cloud_defend.alerts-lab-YYYY.MM.dd`로 들어가므로 룰의 `logs-cloud_defend.alerts-*`에 포함된다. `live-logs/`도 같은 폴더 규칙을 사용한다. 미등록 폴더의 로그는 `logs-lab-*`로 들어가며 `lab_unknown_source_profile` 태그로 구분한다. 네트워크 입력은 기존 `logs-lab-*`를 사용한다.
+예를 들어 `logs/incident001/cloud_defend.alerts/alerts.ndjson`은 `logs-cloud_defend.alerts-lab-case_incident001-YYYY.MM.dd`로 들어가므로 룰의 `logs-cloud_defend.alerts-*`에 포함된다. `live-logs/`도 같은 폴더 규칙을 사용한다. 문서에는 실제 입력 경로에서 얻은 `lab.case_id=incident001`과 `lab.source_profile=cloud_defend.alerts`를 기록한다.
+
+기존의 `logs/cloud_defend.alerts/old-case/alerts.ndjson`은 계속 `logs-cloud_defend.alerts-lab-YYYY.MM.dd`로 들어간다. `logs/` 바로 아래 파일·미등록 폴더와 네트워크 입력도 기존 `logs-lab-*`를 사용한다. **case로 명시적으로 등록한 첫 번째 폴더만 새 구조로 해석**하며, 기존 소스 우선 구조에는 case ID를 자동 추측해서 붙이지 않는다. 등록 case 안에서 소스 폴더가 없거나 미등록이면 해당 case의 generic 인덱스로 보내고 `lab_unknown_source_profile` 태그를 남긴다.
 
 폴더는 수집 목적지를 정한다. 제품 파서를 설치하거나 쿼리 조건을 자동으로 채우지는 않는다. 등록 소스는 누락된 `event.dataset`만 보충하고, 원본의 `event.module`, `event.kind`, `event.category` 등 의미 필드를 탐지에 맞춰 변경하지 않는다. 기존 `event.dataset`이 폴더와 다르면 값을 보존하고 `lab_source_dataset_mismatch` 태그를 붙인다.
 
@@ -131,8 +149,8 @@ python3 builder.py init
 
 ```bash
 # 복사 중인 파일이 먼저 읽히지 않도록 .partial로 준비한 다음 이름 변경
-cp /path/to/auth.log logs/auth.log.partial
-mv logs/auth.log.partial logs/auth.log
+cp /path/to/ecs-auth.ndjson logs/incident001/system.auth/events.ndjson.partial
+mv logs/incident001/system.auth/events.ndjson.partial logs/incident001/system.auth/events.ndjson
 ```
 
 약 5초의 파일 탐색 주기 + 처리/인덱스 refresh 시간 후 조회할 수 있다. `.tmp`, `.partial`, `.gitkeep`, `README*`, `.DS_Store`는 제외한다. 컨테이너 UID 1000이 파일을 읽고 디렉터리를 탐색할 수 있어야 한다.
@@ -160,9 +178,11 @@ ECS JSON이나 Beats 입력에 이미 `event.original`이 있으면 그대로 �
 
 ### 수집 상태 확인
 
-Kibana Discover → `Lab logs` 데이터 뷰를 선택한다. 과거 로그는 우측 상단 시간 범위를 해당 시각으로 변경한다. Security의 기본 시간 범위 밖에 있는 로그도 같은 이유로 보이지 않을 수 있다.
+Kibana Discover → `Case incident001` 데이터 뷰를 선택한다. 과거 로그는 우측 상단 시간 범위를 해당 시각으로 변경한다. 전체 case와 기존 구조의 로그를 함께 조회하려면 `Lab logs`를 사용한다.
 
-방금 넣은 과거 로그를 찾으려면 `Lab logs — ingest time`을 선택해 최근 수집 시각으로 검색한다. `@timestamp`는 원래 시각을 유지한다. `lab.source_profile`로 소스를, `lab.input_path`로 이 lab에서 읽은 파일 경로를 확인할 수 있다. 데이터 뷰의 시간 필드를 바꿔도 탐지 룰의 시간 설정은 자동 변경되지 않는다.
+방금 넣은 과거 로그를 찾으려면 `Case incident001 — ingest time`을 선택해 최근 수집 시각으로 검색한다. `@timestamp`는 원래 시각을 유지한다. `lab.case_id`로 case를, `lab.source_profile`로 소스를, `lab.input_path`로 이 lab에서 읽은 파일 경로를 확인할 수 있다. 전체 수집 시간 뷰는 `Lab logs — ingest time`이다.
+
+Discover에서 case 데이터 뷰를 선택해도 예약 실행되는 탐지 룰의 검색 범위나 시간 설정은 바뀌지 않는다. 테스트 복제본의 인덱스 패턴을 원래 소스와 해당 case를 모두 만족하도록 지정한다. 예: `logs-cloud_defend.alerts-lab-case_incident001-*`. [case별 탐지 테스트 절차](docs/detection-testing.md#3-case별-양성음성-대조-테스트)를 참고한다.
 
 이전 구성에서 업데이트했다면 `python3 builder.py down` 후 `python3 builder.py up`으로 템플릿·권한·데이터 뷰·Logstash 설정을 적용한다. Trial 사용 중이면 `up --trial`을 사용한다. 기존 인덱스와 이미 읽은 파일은 자동 이동·재수집하지 않는다.
 
@@ -234,10 +254,13 @@ python3 builder.py destroy --yes --purge-cache --purge-secrets
 | Logstash 수집 위치 / queue / DLQ | 유지 | 삭제 | 삭제 |
 | 인증서 볼륨 | 유지 | 삭제 | 삭제 |
 | `.env` / Labs 캐시 | 유지 | 유지 | 삭제 |
+| `.cases/registry.json` | 유지 | 유지 | 유지 |
 | 원본 `logs/`, `live-logs/` | 유지 | 유지 | 유지 |
 | Docker 이미지 | 유지 | 유지 | 유지 |
 
 원본 로그는 자동 삭제하지 않는다. `destroy` 후 다시 시작하면 남아 있는 원본 로그를 처음부터 다시 읽는다. 일반 `down`/`up`은 sincedb를 재사용하므로 기존 파일의 수집 위치를 이어간다. 완료 파일을 재수집하려면 새 파일로 복사하거나 데이터 삭제 후 재구축한다.
+
+case 등록 정보도 purge 옵션과 관계없이 보존한다. 남아 있는 원본을 다시 시작할 때 같은 case로 수집하고 데이터 뷰를 재구성하기 위해서다. 기존 파일을 case 폴더로 이동해도 이미 색인된 문서는 이동하지 않으며, 같은 inode를 유지한 이동은 sincedb 때문에 다시 읽히지 않을 수 있다.
 
 서비스는 `restart: "no"`이므로 Docker/호스트 재부팅 후 자동 상시 실행하지 않는다. 사용자가 `up`을 실행할 때 시작한다. 호스트 전역 prune, 방화벽 수정, `vm.max_map_count` 변경은 하지 않는다. 실습 환경에서는 `node.store.allow_mmap=false`를 사용한다.
 

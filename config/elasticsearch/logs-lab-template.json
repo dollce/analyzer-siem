@@ -1,7 +1,7 @@
 {
   "index_patterns": ["logs-lab-*"],
   "priority": 501,
-  "version": 2,
+  "version": 3,
   "_meta": {"description": "Disposable SIEM lab: ordinary indices, ECS-oriented fields, no paid features"},
   "template": {
     "settings": {
@@ -22,6 +22,7 @@
         "lab": {"properties": {
           "unmapped": {"type": "flattened"},
           "source_profile": {"type": "keyword"},
+          "case_id": {"type": "keyword"},
           "input_path": {"type": "keyword"}
         }},
         "ecs": {"properties": {"version": {"type": "keyword"}}},

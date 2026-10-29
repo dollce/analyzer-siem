@@ -88,7 +88,7 @@ def describe_profiles(profiles, name=None, as_json=False):
         '이 명령은 폴더 생성, SIEM 기동, 로그 주입, 탐지 테스트를 실행하지 않습니다.',
         '',
         '폴더·인덱스·쿼리의 관계',
-        '  1. logs/<소스>/ 폴더가 로그를 저장할 출력 인덱스를 정합니다.',
+        '  1. 등록된 logs/<case>/<소스>/ 폴더가 case와 출력 인덱스를 정합니다. 기존 logs/<소스>/도 지원합니다.',
         '  2. 룰의 Index patterns에 그 인덱스가 포함되어야 검색 대상이 됩니다.',
         '  3. Custom query는 로그의 실제 ECS 필드 값을 검사합니다. 인덱스가 맞아도 쿼리 조건을 충족해야 합니다.',
         '  폴더명만으로 쿼리에 필요한 필드 값을 채우거나 탐지 성공을 보장하지 않습니다.',
@@ -98,13 +98,15 @@ def describe_profiles(profiles, name=None, as_json=False):
         '  python3 builder.py sources cloud_defend.alerts   # 특정 소스 조회',
         '  python3 builder.py sources --json                # 스크립트용 순수 JSON 출력',
         '  python3 builder.py sources --help                # 명령 문법 확인',
+        '  python3 builder.py case init --name incident001  # case별 빈 소스 폴더 준비',
         '',
         '등록된 소스 안내',
     ]
     for key, profile in selected.items():
         lines.append(f"\n{key}: {profile['description']}")
-        lines.append(f"  완료 파일: logs/{key}/ → {profile['index_prefix']}-YYYY.MM.dd")
-        lines.append(f"  추가 기록 파일: live-logs/{key}/ → 같은 출력 인덱스")
+        lines.append(f"  case 완료 파일: logs/<case>/{key}/ → {profile['index_prefix']}-case_<case>-YYYY.MM.dd")
+        lines.append(f"  case 추가 기록 파일: live-logs/<case>/{key}/ → 같은 case 인덱스")
+        lines.append(f"  기존 경로: logs/{key}/ 또는 live-logs/{key}/ → {profile['index_prefix']}-YYYY.MM.dd")
         lines.append('  룰의 Index patterns 예: ' + ', '.join(profile['rule_index_patterns']))
         lines.append('  확인할 ECS 필드: ' + ', '.join(profile['required_fields']))
         if 'example_query' in profile:
@@ -115,8 +117,9 @@ def describe_profiles(profiles, name=None, as_json=False):
         '',
         '필드 목록과 쿼리는 준비를 위한 안내입니다. 실제 룰의 전체 조건과 검색 시간 범위도 확인하세요.',
         '폴더 설정은 통합 패키지를 설치하거나 일반 텍스트를 제품별 ECS 이벤트로 변환하지 않습니다.',
-        'logs/ 바로 아래 파일과 미등록 폴더는 logs-lab-*로 수집하며, 원본 @timestamp는 보존합니다.',
-        '빈 폴더 준비: python3 builder.py init / SIEM 실행: python3 builder.py up (Trial 선택 시 up --trial)',
+        '등록한 case만 case로 분류합니다. 기존 경로와 미등록 폴더는 기존 수집 방식을 유지하며 원본 @timestamp를 보존합니다.',
+        '새 case 등록 후 로그를 넣기 전에 up을 실행해 라우팅·데이터 뷰를 적용하세요 (Trial 선택 시 up --trial).',
+        'case 데이터 뷰 선택만으로 예약 탐지 룰이 해당 case로 제한되지는 않습니다.',
         '실제 매칭 확인: Kibana 검색·Rule Preview. 자세한 절차: docs/detection-testing.md',
     ]
     return '\n'.join(lines)

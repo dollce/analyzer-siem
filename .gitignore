@@ -1,5 +1,6 @@
 .env
 .state/
+.cases/
 .cache/
 __pycache__/
 *.pyc
