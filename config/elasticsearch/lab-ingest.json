@@ -1,0 +1,11 @@
+{
+  "description": "Record arrival time while preserving the source event timestamp",
+  "processors": [
+    {
+      "set": {
+        "field": "event.ingested",
+        "value": "{{{_ingest.timestamp}}}"
+      }
+    }
+  ]
+}

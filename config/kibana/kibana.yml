@@ -1,0 +1,22 @@
+server.name: elastic-siem-lab
+server.host: 0.0.0.0
+elasticsearch.hosts: ["https://elasticsearch:9200"]
+elasticsearch.username: kibana_system
+elasticsearch.password: "${KIBANA_PASSWORD}"
+elasticsearch.ssl.certificateAuthorities: ["/usr/share/kibana/config/certs/ca/ca.crt"]
+xpack.encryptedSavedObjects.encryptionKey: "${KIBANA_ENCRYPTION_KEY}"
+xpack.reporting.encryptionKey: "${KIBANA_REPORTING_KEY}"
+xpack.security.encryptionKey: "${KIBANA_SECURITY_KEY}"
+telemetry.optIn: false
+telemetry.enabled: false
+newsfeed.enabled: false
+uiSettings.overrides:
+  "securitySolution:defaultIndex":
+    - logs-*
+    - winlogbeat-*
+    - auditbeat-*
+    - filebeat-*
+    - packetbeat-*
+    - endgame-*
+    - .ds-logs-*
+    - apm-*-transaction*
