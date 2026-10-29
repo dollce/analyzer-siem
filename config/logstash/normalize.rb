@@ -3,6 +3,13 @@ require 'json'
 # Keep raw evidence and accept either line-oriented text or one ECS JSON object
 # per line. This is not a vendor-specific parser for every possible log format.
 def filter(event)
+  # Capture the local file plugin's path before merging JSON. Network inputs
+  # append their own marker and can never supply the exact trusted file marker.
+  # Always reset these fields: a Beats sender can include arbitrary metadata.
+  input_path = event.get('[@metadata][lab_ingress]') == 'file' ? event.get('[log][file][path]') : nil
+  event.set('[@metadata][lab_input_path]', input_path.is_a?(String) ? input_path : nil)
+  event.set('[@metadata][lab_index_prefix]', 'logs-lab')
+  event.remove('[@metadata][source_timestamp]')
   objects = %w[event host source destination user process file network observer agent log ecs rule related threat cloud container data_stream]
   original = event.get('message')
   file_path = event.get('[log][file][path]')
@@ -55,7 +62,6 @@ def filter(event)
     event.set('[event][original]', original)
   end
   event.set('[event][kind]', 'event') unless event.get('[event][kind]')
-  event.set('[event][dataset]', 'lab.generic') unless event.get('[event][dataset]')
   event.set('[ecs][version]', '8.11.0') unless event.get('[ecs][version]')
   event.set('[log][file][path]', file_path) if file_path && !event.get('[log][file][path]')
   [event]
@@ -93,6 +99,29 @@ if respond_to?(:test)
     expect('original evidence is not replaced by the normalized message') do |events|
       events[0].get('[event][original]') == 'Oct 29 sshd[123]: failed login from 192.0.2.10' &&
         events[0].get('message') == 'Failed login for alice'
+    end
+  end
+
+  test 'trusted local input path survives a different JSON source path' do
+    in_event do
+      {'message' => '{"log":{"file":{"path":"/var/log/source.log"}},"@metadata":{"lab_input_path":"spoof"}}',
+       'log' => {'file' => {'path' => '/logs/cloud_defend.alerts/case-a/input.jsonl'}},
+       '@metadata' => {'lab_ingress' => 'file'}}
+    end
+    expect('local route path and original source path are both retained') do |events|
+      events[0].get('[@metadata][lab_input_path]') == '/logs/cloud_defend.alerts/case-a/input.jsonl' &&
+        events[0].get('[log][file][path]') == '/var/log/source.log'
+    end
+  end
+
+  test 'network ingress resets routing fields supplied by a sender' do
+    in_event do
+      {'message' => 'network source', 'log' => {'file' => {'path' => '/logs/cloud_defend.alerts/spoof.jsonl'}},
+       '@metadata' => {'lab_ingress' => ['file', 'network'], 'lab_input_path' => 'spoof', 'lab_index_prefix' => '.security'}}
+    end
+    expect('no trusted file path is captured') do |events|
+      events[0].get('[@metadata][lab_input_path]').nil? &&
+        events[0].get('[@metadata][lab_index_prefix]') == 'logs-lab'
     end
   end
 end

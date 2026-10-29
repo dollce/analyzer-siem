@@ -1,6 +1,6 @@
 # Elastic Security SIEM lab
 
-필요할 때 올리고, 분석이 끝나면 지우는 Docker Compose 기반 SIEM.
+사고분석과 탐지 룰 테스트가 필요할 때 올리고, 분석이 끝나면 지우는 Docker Compose 기반 SIEM.
 Elasticsearch → Kibana → 초기 설정 → Logstash 순서로 구성된다.
 Elasticsearch·Kibana·Logstash는 `9.5.5`로 고정한다. 기본은 **무료 Basic**, 분석에 구독 기능이 필요하면 **Trial을 명시적으로 선택**할 수 있다.
 
@@ -31,8 +31,8 @@ python3 builder.py init
 
 - `.env`: 임의 생성한 서비스 비밀번호와 Kibana 암호화 키. Git에서 제외, 최초 생성 권한 `0600`
 - `.state/instances.yml`: 인증서 SAN 입력
-- `logs/`: 수집할 완료된 파일
-- `live-logs/`: 계속 추가되는 파일
+- `logs/<source>/`: 데이터 소스별로 수집할 완료된 파일. 사전 정의된 빈 폴더를 생성
+- `live-logs/<source>/`: 같은 분류로 계속 추가되는 파일
 
 `.env`에서 포트, 메모리, TLS 추가 IP/DNS를 수정할 수 있다. 비밀번호는 최초 생성 값을 유지한다. 데이터 볼륨이 남아 있는 상태에서 `ELASTIC_PASSWORD`만 바꾸면 기존 계정 비밀번호는 변경되지 않는다.
 
@@ -83,17 +83,51 @@ Trial은 기능을 사용할 수 있는 라이선스를 제공한다. Elastic Ag
 
 - `xpack.security.enabled=true`, API key 활성화, Elasticsearch HTTP/transport TLS
 - Kibana 암호화 키 유지. 탐지 엔진 초기화에 필요한 설정 적용
-- `logs-lab-*` ECS 중심 인덱스 템플릿, 1 shard / 0 replica
+- `logs-lab-*` 및 소스별 `logs-<source>-lab-*` ECS 중심 인덱스 템플릿, 1 shard / 0 replica
 - `lab-ingest` pipeline: `event.ingested`에 수집 시각 기록
-- 기본 데이터 뷰 `Lab logs`, Security 검색 대상에 `logs-*` 포함
+- 모든 소스를 조회하는 `Lab logs` (`@timestamp`)와 `Lab logs — ingest time` (`event.ingested`) 데이터 뷰. Security 검색 대상에 `logs-*` 포함
 - 현재 Stack과 호환되는 최신 prebuilt rules 설치/갱신
-- Logstash의 Elasticsearch 계정은 `logs-lab-*` 쓰기 권한만 부여
+- Logstash의 Elasticsearch 계정은 등록된 소스의 lab 인덱스 패턴에만 쓰기 권한 부여
 
 **신규 prebuilt rules는 비활성 상태로 설치된다.** Security → Detection rules (SIEM)에서 실제 데이터에 맞는 규칙을 선택해 활성화한다. 이미 활성화한 규칙은 업데이트 시 상태를 유지한다. Basic 모드에서는 ML 등 구독 기능이 필요한 규칙을 제외한다. Trial 모드에서도 ML 작업과 데이터 소스 등 개별 기능의 설정은 별도로 필요하다. 자동 설치를 끄려면 `.env`의 `PREBUILT_RULES=false`로 설정한다.
 
 ## 3. 로그 넣기
 
 완료된 UTF-8 텍스트 파일, NDJSON/JSONL 파일을 `logs/` 아래에 넣으면 하위 디렉터리까지 검색한다. read 모드라 마지막 줄에 개행이 없어도 수집한다. `.gz`로 압축한 줄 단위 로그도 지원한다.
+
+### 데이터 소스별 폴더
+
+```bash
+# 컨테이너 실행 없이 폴더·인덱스·필드 안내 조회
+python3 builder.py sources
+python3 builder.py sources cloud_defend.alerts
+
+# init은 빈 소스 폴더도 생성한다
+python3 builder.py init
+```
+
+`logs/` 바로 아래의 폴더가 소스를 결정한다. 사건별 폴더는 그 아래에 둔다.
+
+| 폴더 | 출력 인덱스 패턴 | 용도 |
+| --- | --- | --- |
+| `logs/cloud_defend.alerts/` | `logs-cloud_defend.alerts-lab-*` | Defend for Containers 경보 |
+| `logs/cloud_defend.events.process/`, `logs/cloud_defend.events.file/` | `logs-cloud_defend.events.<종류>-lab-*` | 컨테이너 프로세스·파일 이벤트 |
+| `logs/endpoint.events.process/`, `logs/endpoint.events.network/` | `logs-endpoint.events.<종류>-lab-*` | Endpoint 프로세스·네트워크 이벤트 |
+| `logs/endpoint.events.file/`, `logs/endpoint.events.registry/` | `logs-endpoint.events.<종류>-lab-*` | Endpoint 파일·레지스트리 이벤트 |
+| `logs/windows.sysmon_operational/` | `logs-windows.sysmon_operational-lab-*` | ECS로 변환한 Sysmon 이벤트 |
+| `logs/system.security/` | `logs-system.security-lab-*` | ECS로 변환한 Windows Security 이벤트 |
+| `logs/system.auth/` | `logs-system.auth-lab-*` | 인증 이벤트 |
+| `logs/auditd_manager.auditd/` | `logs-auditd_manager.auditd-lab-*` | ECS로 변환한 auditd 이벤트 |
+| `logs/aws.cloudtrail/` | `logs-aws.cloudtrail-lab-*` | ECS로 변환한 CloudTrail 이벤트 |
+| `logs/generic/` 또는 `logs/` 바로 아래 | `logs-lab-*` | 일반 로그 / 자체 분석 |
+
+예를 들어 `logs/cloud_defend.alerts/case-001/alerts.ndjson`은 `logs-cloud_defend.alerts-lab-YYYY.MM.dd`로 들어가므로 룰의 `logs-cloud_defend.alerts-*`에 포함된다. `live-logs/`도 같은 폴더 규칙을 사용한다. 미등록 폴더의 로그는 `logs-lab-*`로 들어가며 `lab_unknown_source_profile` 태그로 구분한다. 네트워크 입력은 기존 `logs-lab-*`를 사용한다.
+
+폴더는 수집 목적지를 정한다. 제품 파서를 설치하거나 쿼리 조건을 자동으로 채우지는 않는다. 등록 소스는 누락된 `event.dataset`만 보충하고, 원본의 `event.module`, `event.kind`, `event.category` 등 의미 필드를 탐지에 맞춰 변경하지 않는다. 기존 `event.dataset`이 폴더와 다르면 값을 보존하고 `lab_source_dataset_mismatch` 태그를 붙인다.
+
+[사고분석·탐지 테스트 가이드](docs/detection-testing.md)에 개념 설명, 양성·음성 대조 데이터, Rule Preview, 시간 범위와 새 소스 등록 절차가 있다. 제공한 예제는 자동 수집하지 않는다.
+
+### 파일 배치
 
 ```bash
 # 복사 중인 파일이 먼저 읽히지 않도록 .partial로 준비한 다음 이름 변경
@@ -127,6 +161,10 @@ ECS JSON이나 Beats 입력에 이미 `event.original`이 있으면 그대로 �
 ### 수집 상태 확인
 
 Kibana Discover → `Lab logs` 데이터 뷰를 선택한다. 과거 로그는 우측 상단 시간 범위를 해당 시각으로 변경한다. Security의 기본 시간 범위 밖에 있는 로그도 같은 이유로 보이지 않을 수 있다.
+
+방금 넣은 과거 로그를 찾으려면 `Lab logs — ingest time`을 선택해 최근 수집 시각으로 검색한다. `@timestamp`는 원래 시각을 유지한다. `lab.source_profile`로 소스를, `lab.input_path`로 이 lab에서 읽은 파일 경로를 확인할 수 있다. 데이터 뷰의 시간 필드를 바꿔도 탐지 룰의 시간 설정은 자동 변경되지 않는다.
+
+이전 구성에서 업데이트했다면 `python3 builder.py down` 후 `python3 builder.py up`으로 템플릿·권한·데이터 뷰·Logstash 설정을 적용한다. Trial 사용 중이면 `up --trial`을 사용한다. 기존 인덱스와 이미 읽은 파일은 자동 이동·재수집하지 않는다.
 
 ```bash
 python3 builder.py status

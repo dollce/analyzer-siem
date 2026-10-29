@@ -17,6 +17,7 @@ import urllib.request
 import ssl
 import uuid
 from scripts.check_version import report_latest
+from scripts.source_profiles import load_profiles, create_source_folders, describe_profiles
 
 ROOT = Path(__file__).resolve().parent
 SECRET_KEYS = ('ELASTIC_PASSWORD', 'KIBANA_PASSWORD', 'LOGSTASH_PASSWORD',
@@ -35,7 +36,11 @@ def read_env(path):
     return result
 
 
-def init():
+def init(*, prepare_sources=True):
+    # Local configuration must be valid before credentials or folders are created.
+    if prepare_sources:
+        profiles = load_profiles(ROOT / 'config/source-profiles.json')
+        create_source_folders(ROOT, profiles)
     env_path = ROOT / '.env'
     if not env_path.exists():
         text = (ROOT / '.env.example').read_text()
@@ -135,13 +140,16 @@ def up(args, env=None):
     kibana_flags = ['--force-recreate'] if mode == 'trial' else []
     compose('up', '-d', '--no-deps', *kibana_flags, '--wait', '--wait-timeout', '600', 'kibana', timeout=660)
     compose('run', '--rm', '--no-deps', 'bootstrap', timeout=900, overrides={'LICENSE_MODE': mode})
-    compose('up', '-d', '--no-deps', '--wait', '--wait-timeout', '600', 'logstash', timeout=660)
+    # Bind-mounted Ruby/profile content can change without Compose detecting it.
+    # Recreate so the updated pipeline and source routes are loaded on every up.
+    compose('up', '-d', '--no-deps', '--force-recreate', '--wait', '--wait-timeout', '600', 'logstash', timeout=660)
     compose('cp', 'elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt', '.state/ca.crt')
     license_info = request(env, '/_license')['license']
     if license_info['type'] != mode or license_info['status'] != 'active':
         raise RuntimeError(f'Expected an active {mode} license.')
     print(f"Ready: http://localhost:{env['KIBANA_PORT']}/app/security (user: elastic)")
     print('Password: .env ELASTIC_PASSWORD. CA: .state/ca.crt. Drop completed files into logs/.')
+    print('Source-specific folders: python3 builder.py sources. Testing guide: docs/detection-testing.md')
 
 
 def smoke(env):
@@ -172,6 +180,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-version-check', action='store_true', help='Skip the informational release lookup')
     sub = parser.add_subparsers(dest='command', required=True)
+    sources = sub.add_parser('sources', help='List source folders, target indices and ECS field guidance without starting the lab')
+    sources.add_argument('name', nargs='?', help='Show one source profile, for example cloud_defend.alerts')
+    sources.add_argument('--json', action='store_true', help='Output the validated profile configuration as JSON')
     version = sub.add_parser('version', help='Refresh the latest published release notice; never upgrade')
     version.add_argument('--offline', action='store_true', help='Use the existing release cache only')
     for name in ('init', 'check', 'down', 'status', 'smoke', 'rotate-certs'):
@@ -188,13 +199,17 @@ def main():
     destroy.add_argument('--purge-secrets', action='store_true', help='Also delete .env and generated local state')
     args = parser.parse_args()
     try:
+        if args.command == 'sources':
+            print(describe_profiles(load_profiles(ROOT / 'config/source-profiles.json'), args.name, args.json))
+            return
         if args.command == 'version':
             env_path = ROOT / '.env'
             env = read_env(env_path if env_path.exists() else ROOT / '.env.example')
             report_latest(env['STACK_VERSION'], cache_dir=ROOT / '.cache/version-check',
                           offline=args.offline, force=True)
             return
-        env = init()
+        # A broken source profile must never prevent stopping/removing the lab.
+        env = init(prepare_sources=args.command in ('init', 'up', 'check'))
         if not args.no_version_check:
             report_latest(env['STACK_VERSION'], cache_dir=ROOT / '.cache/version-check',
                           offline=getattr(args, 'offline', False))
@@ -202,13 +217,14 @@ def main():
             up(args, env=env)
             return
         if args.command == 'init':
-            print('Initialized .env and certificate inputs. No containers started.')
+            print('Initialized .env, certificate inputs and empty source folders. No containers started.')
         elif args.command == 'sync-labs':
             sync(args)
         elif args.command == 'check':
             compose('config', '--quiet')
             run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'])
             run(['ruby', str(ROOT / 'tests/test_normalize.rb')])
+            run(['ruby', str(ROOT / 'tests/test_route.rb')])
             run(['bash', '-n', str(ROOT / 'scripts/certs.sh')])
         elif args.command == 'down':
             compose('down', '--remove-orphans', timeout=180)

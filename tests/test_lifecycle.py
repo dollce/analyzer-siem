@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,8 @@ class LifecycleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         shutil.copy(REPO / '.env.example', self.root)
+        (self.root / 'config').mkdir()
+        shutil.copy(REPO / 'config/source-profiles.json', self.root / 'config')
         self.patcher = patch.object(lab, 'ROOT', self.root)
         self.patcher.start()
 
@@ -114,6 +117,56 @@ class LifecycleTests(unittest.TestCase):
              patch.object(lab, 'report_latest') as report, patch('builtins.print'):
             lab.main()
         report.assert_not_called()
+
+    def test_source_folders_are_created_without_log_files_or_replacing_evidence(self):
+        lab.init()
+        path = self.root / 'logs/cloud_defend.alerts/case-001.ndjson'
+        path.write_bytes(b'original evidence')
+        with patch.object(lab, 'compose') as compose:
+            lab.init()
+        self.assertEqual(path.read_bytes(), b'original evidence')
+        self.assertTrue((self.root / 'live-logs/cloud_defend.alerts').is_dir())
+        self.assertFalse(list((self.root / 'logs/windows.sysmon_operational').iterdir()))
+        compose.assert_not_called()
+
+    def test_source_listing_is_read_only_and_json_is_machine_readable(self):
+        with patch.object(lab.sys, 'argv', ['builder.py', 'sources', 'cloud_defend.alerts', '--json']), \
+             patch.object(lab, 'init') as init, patch.object(lab, 'compose') as compose, \
+             patch.object(lab, 'report_latest') as report, patch('sys.stdout', new_callable=io.StringIO) as output:
+            lab.main()
+        profiles = json.loads(output.getvalue())['profiles']
+        self.assertEqual(list(profiles), ['cloud_defend.alerts'])
+        self.assertEqual(profiles['cloud_defend.alerts']['index_prefix'], 'logs-cloud_defend.alerts-lab')
+        init.assert_not_called()
+        compose.assert_not_called()
+        report.assert_not_called()
+        self.assertFalse((self.root / '.env').exists())
+        self.assertFalse((self.root / 'logs').exists())
+
+    def test_invalid_profiles_prevent_initialization_side_effects(self):
+        (self.root / 'config/source-profiles.json').write_text('{}')
+        with self.assertRaises(ValueError):
+            lab.init()
+        self.assertFalse((self.root / '.env').exists())
+        self.assertFalse((self.root / 'logs').exists())
+
+    def test_invalid_profiles_do_not_block_stopping_or_destroying_lab(self):
+        lab.init()
+        (self.root / 'config/source-profiles.json').write_text('{}')
+        for args in (['down'], ['destroy', '--yes']):
+            with self.subTest(args=args), \
+                 patch.object(lab.sys, 'argv', ['builder.py', '--no-version-check', *args]), \
+                 patch.object(lab, 'compose') as compose, patch('builtins.print'):
+                lab.main()
+            self.assertEqual(compose.call_args.args[0], 'down')
+
+    def test_up_recreates_logstash_to_reload_bind_mounted_source_profiles(self):
+        with patch.object(lab, 'sync'), patch.object(lab, 'compose') as compose, \
+             patch.object(lab, 'request', return_value={'license': {'type': 'basic', 'status': 'active'}}), \
+             patch('builtins.print'):
+            lab.up(types.SimpleNamespace(offline=False, ref=None, trial=False))
+        logstash = next(call for call in compose.call_args_list if 'logstash' in call.args)
+        self.assertIn('--force-recreate', logstash.args)
 
 
 if __name__ == '__main__':
