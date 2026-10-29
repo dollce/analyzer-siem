@@ -1,0 +1,49 @@
+{
+  "index_patterns": ["logs-lab-*"],
+  "priority": 501,
+  "version": 1,
+  "_meta": {"description": "Disposable SIEM lab: ordinary indices, ECS-oriented fields, no paid features"},
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.default_pipeline": "lab-ingest",
+      "index.mapping.total_fields.limit": 2000,
+      "index.mapping.total_fields.ignore_dynamic_beyond_limit": true
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {"strings": {"match_mapping_type": "string", "mapping": {"type": "keyword", "ignore_above": 1024}}}
+      ],
+      "properties": {
+        "@timestamp": {"type": "date"},
+        "message": {"type": "match_only_text"},
+        "tags": {"type": "keyword"},
+        "lab": {"properties": {"unmapped": {"type": "flattened"}}},
+        "ecs": {"properties": {"version": {"type": "keyword"}}},
+        "event": {
+          "properties": {
+            "ingested": {"type": "date"},
+            "created": {"type": "date", "ignore_malformed": true},
+            "original": {"type": "text", "index": false},
+            "kind": {"type": "keyword"},
+            "category": {"type": "keyword"},
+            "type": {"type": "keyword"},
+            "action": {"type": "keyword"},
+            "outcome": {"type": "keyword"},
+            "dataset": {"type": "keyword"},
+            "module": {"type": "keyword"},
+            "code": {"type": "keyword"},
+            "sequence": {"type": "long", "ignore_malformed": true}
+          }
+        },
+        "host": {"properties": {"name": {"type": "keyword"}, "ip": {"type": "ip", "ignore_malformed": true}}},
+        "source": {"properties": {"ip": {"type": "ip", "ignore_malformed": true}, "port": {"type": "long", "ignore_malformed": true}}},
+        "destination": {"properties": {"ip": {"type": "ip", "ignore_malformed": true}, "port": {"type": "long", "ignore_malformed": true}}},
+        "process": {"properties": {"pid": {"type": "long", "ignore_malformed": true}, "name": {"type": "keyword"}, "command_line": {"type": "wildcard"}}},
+        "user": {"properties": {"name": {"type": "keyword"}, "id": {"type": "keyword"}}},
+        "log": {"properties": {"file": {"properties": {"path": {"type": "keyword"}}}}}
+      }
+    }
+  }
+}

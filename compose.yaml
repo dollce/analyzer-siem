@@ -1,0 +1,164 @@
+name: ${COMPOSE_PROJECT_NAME:-elastic-siem-lab}
+
+x-client: &client
+  image: python:3.13-alpine
+  restart: "no"
+  volumes:
+    - ./scripts:/scripts:ro
+    - ./config/elasticsearch:/config/elasticsearch:ro
+    - ./.cache/elastic-labs:/labs:ro
+    - certs:/certs:ro
+  environment: &client-env
+    ES_URL: https://elasticsearch:9200
+    KIBANA_URL: http://kibana:5601
+    CA_CERT: /certs/ca/ca.crt
+    ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?Run python3 builder.py init}
+    KIBANA_PASSWORD: ${KIBANA_PASSWORD:?Run init}
+    LOGSTASH_PASSWORD: ${LOGSTASH_PASSWORD:?Run init}
+    PREBUILT_RULES: ${PREBUILT_RULES:-true}
+    LICENSE_MODE: ${LICENSE_MODE:-basic}
+  extra_hosts:
+    - host.docker.internal:host-gateway
+
+services:
+  certs:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:-9.5.5}
+    user: "0"
+    restart: "no"
+    entrypoint: ["bash", "/scripts/certs.sh"]
+    volumes:
+      - certs:/certs
+      - ./scripts/certs.sh:/scripts/certs.sh:ro
+      - ./.state/instances.yml:/instances.yml:ro
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:-9.5.5}
+    restart: "no"
+    user: "1000:0"
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    environment:
+      node.name: elasticsearch
+      cluster.name: elastic-siem-lab
+      discovery.type: single-node
+      network.host: 0.0.0.0
+      bootstrap.memory_lock: "true"
+      # Avoid changing the host/VM vm.max_map_count for this disposable lab.
+      node.store.allow_mmap: "false"
+      xpack.license.self_generated.type: basic
+      xpack.security.enabled: "true"
+      xpack.security.authc.api_key.enabled: "true"
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.key: certs/elasticsearch/elasticsearch.key
+      xpack.security.http.ssl.certificate: certs/elasticsearch/elasticsearch.crt
+      xpack.security.http.ssl.certificate_authorities: certs/ca/ca.crt
+      xpack.security.transport.ssl.enabled: "true"
+      xpack.security.transport.ssl.verification_mode: certificate
+      xpack.security.transport.ssl.key: certs/elasticsearch/elasticsearch.key
+      xpack.security.transport.ssl.certificate: certs/elasticsearch/elasticsearch.crt
+      xpack.security.transport.ssl.certificate_authorities: certs/ca/ca.crt
+      search.allow_expensive_queries: "true"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?Run init}
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms1g -Xmx1g}
+    mem_limit: ${ES_MEMORY:-3g}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+      - certs:/usr/share/elasticsearch/config/certs:ro
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ES_PORT:-9200}:9200"
+      - "${BIND_HOST:-0.0.0.0}:${ES_TRANSPORT_PORT:-9300}:9300"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --cacert config/certs/ca/ca.crt -u elastic:\"$$ELASTIC_PASSWORD\" 'https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+
+  auth:
+    <<: *client
+    command: ["python", "/scripts/bootstrap.py", "auth"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION:-9.5.5}
+    restart: "no"
+    user: "1000:0"
+    mem_limit: ${KIBANA_MEMORY:-2g}
+    depends_on:
+      auth:
+        condition: service_completed_successfully
+    environment:
+      KIBANA_PASSWORD: ${KIBANA_PASSWORD:?Run init}
+      KIBANA_ENCRYPTION_KEY: ${KIBANA_ENCRYPTION_KEY:?Run init}
+      KIBANA_REPORTING_KEY: ${KIBANA_REPORTING_KEY:?Run init}
+      KIBANA_SECURITY_KEY: ${KIBANA_SECURITY_KEY:?Run init}
+    volumes:
+      - ./config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+      - certs:/usr/share/kibana/config/certs:ro
+      - kibanadata:/usr/share/kibana/data
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${KIBANA_PORT:-5601}:5601"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5601/api/status >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+
+  bootstrap:
+    <<: *client
+    command: ["python", "/scripts/bootstrap.py", "configure"]
+    depends_on:
+      kibana:
+        condition: service_healthy
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION:-9.5.5}
+    restart: "no"
+    stop_grace_period: 1m
+    user: "1000:0"
+    mem_limit: ${LOGSTASH_MEMORY:-2g}
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      LOGSTASH_PASSWORD: ${LOGSTASH_PASSWORD:?Run init}
+      LS_JAVA_OPTS: ${LS_JAVA_OPTS:--Xms512m -Xmx512m}
+    volumes:
+      - ./config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./config/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./config/logstash/normalize.rb:/usr/share/logstash/config/normalize.rb:ro
+      - ./logs:/logs:ro
+      - ./live-logs:/live-logs:ro
+      - lsdata:/usr/share/logstash/data
+      - certs:/usr/share/logstash/config/certs:ro
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${BEATS_PORT:-5044}:5044"
+      - "${BIND_HOST:-0.0.0.0}:${SYSLOG_PORT:-5514}:5514/tcp"
+      - "${BIND_HOST:-0.0.0.0}:${SYSLOG_PORT:-5514}:5514/udp"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9600/_node/pipelines/main >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+
+volumes:
+  certs:
+  esdata:
+  kibanadata:
+  lsdata:
+
+networks:
+  default:
+    driver: bridge

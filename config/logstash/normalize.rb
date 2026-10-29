@@ -1,0 +1,86 @@
+require 'json'
+
+# Keep raw evidence and accept either line-oriented text or one ECS JSON object
+# per line. This is not a vendor-specific parser for every possible log format.
+def filter(event)
+  objects = %w[event host source destination user process file network observer agent log ecs rule related threat cloud container data_stream]
+  original = event.get('message')
+  file_path = event.get('[log][file][path]')
+  unless event.get('lab').nil? || event.get('lab').is_a?(Hash)
+    value = event.remove('lab')
+    event.set('[lab][unmapped][lab]', value)
+  end
+  if original.is_a?(String) && ['{', '['].include?(original.lstrip[0])
+    begin
+      parsed = JSON.parse(original)
+      if parsed.is_a?(Hash)
+        parsed.each do |key, value|
+          # Input cannot overwrite Logstash routing/control metadata.
+          next if key.start_with?('@') && key != '@timestamp'
+          next if key.include?('[') || key.include?(']')
+          next if key == 'lab'
+          if key == '@timestamp'
+            event.set('[@metadata][source_timestamp]', value.to_s)
+          elsif key == 'tags'
+            event.set('tags', (Array(event.get('tags')) + Array(value)).map(&:to_s).uniq)
+          elsif objects.include?(key) && !value.is_a?(Hash)
+            event.set("[lab][unmapped][#{key}]", value)
+            event.tag('lab_non_ecs_field')
+          else
+            event.set(key, value)
+          end
+        end
+      else
+        event.tag('lab_json_nonobject')
+      end
+    rescue JSON::ParserError
+      event.tag('lab_json_parse_failure')
+    end
+  end
+  # Beats can supply an already structured event without a message.
+  objects.each do |key|
+    value = event.get(key)
+    unless value.nil? || value.is_a?(Hash)
+      event.remove(key)
+      event.set("[lab][unmapped][#{key}]", value)
+      event.tag('lab_non_ecs_field')
+    end
+  end
+  unless event.get('message').nil? || event.get('message').is_a?(String)
+    value = event.remove('message')
+    event.set('[lab][unmapped][message]', value)
+    event.set('message', original.is_a?(String) ? original : JSON.generate(value))
+  end
+  event.set('[event][original]', original) if original.is_a?(String)
+  event.set('[event][kind]', 'event') unless event.get('[event][kind]')
+  event.set('[event][dataset]', 'lab.generic') unless event.get('[event][dataset]')
+  event.set('[ecs][version]', '8.11.0') unless event.get('[ecs][version]')
+  event.set('[log][file][path]', file_path) if file_path && !event.get('[log][file][path]')
+  [event]
+end
+
+# Logstash's Ruby filter DSL executes these against real LogStash::Event objects
+# during --config.test_and_exit. The standalone Ruby suite skips this block.
+if respond_to?(:test)
+  test 'ECS JSON preserves evidence and source fields' do
+    in_event do
+      {'message' => '{"@timestamp":"2026-10-29T00:00:00Z","event":{"category":["authentication"]},"source":{"ip":"192.0.2.10"}}'}
+    end
+    expect('one ECS event with intact original') do |events|
+      events.size == 1 &&
+        events[0].get('[source][ip]') == '192.0.2.10' &&
+        events[0].get('[event][category]') == ['authentication'] &&
+        events[0].get('[@metadata][source_timestamp]') == '2026-10-29T00:00:00Z' &&
+        events[0].get('[event][original]').start_with?('{')
+    end
+  end
+
+  test 'structured message is preserved without text mapping conflict' do
+    in_event { {'message' => '{"message":{"text":"hello"},"event":"example"}'} }
+    expect('message remains text and scalar event is preserved') do |events|
+      events[0].get('message').is_a?(String) &&
+        events[0].get('[lab][unmapped][message]')['text'] == 'hello' &&
+        events[0].get('[lab][unmapped][event]') == 'example'
+    end
+  end
+end

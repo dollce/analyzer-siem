@@ -1,0 +1,8 @@
+api.http.host: 0.0.0.0
+api.http.port: 9600
+pipeline.ecs_compatibility: v8
+pipeline.workers: 2
+queue.type: persisted
+queue.max_bytes: 512mb
+dead_letter_queue.enable: true
+xpack.monitoring.enabled: false
