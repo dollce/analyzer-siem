@@ -118,9 +118,11 @@ class VersionTests(unittest.TestCase):
                 self.assertEqual(self.report()['status'], 'fresh')
 
     def test_future_or_nonfinite_cache_timestamp_is_ignored(self):
-        for stamp in (self.now + 1, float('nan'), float('inf'), True):
+        for stamp in (self.now + 1, float('nan'), float('inf'), True, 10**400, -(10**400)):
             version.write_cache(self.cache, release(), stamp)
             self.assertIsNone(version.read_cache(self.cache, self.now))
+            with patch.object(version, 'bounded_fetch', side_effect=OSError('offline')):
+                self.assertEqual(self.report()['status'], 'unavailable')
 
     def test_unwritable_cache_is_nonfatal(self):
         with patch.object(version, 'bounded_fetch', return_value=release()), patch.object(version, 'write_cache', side_effect=PermissionError()):

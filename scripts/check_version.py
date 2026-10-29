@@ -124,7 +124,9 @@ def read_cache(cache_dir, now):
         if not isinstance(payload, dict) or payload.get("source") != SOURCE_URL:
             return None
         checked = payload.get("checked_at")
-        if type(checked) not in (int, float) or not math.isfinite(checked) or checked < 0 or checked > now:
+        # Compare integers before converting to float: corrupt JSON may contain
+        # an arbitrarily large integer that math.isfinite cannot represent.
+        if type(checked) not in (int, float) or checked < 0 or checked > now or not math.isfinite(checked):
             return None
         release = parse_release({
             "draft": False, "prerelease": False,
