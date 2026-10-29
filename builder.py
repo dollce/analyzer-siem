@@ -18,6 +18,7 @@ import ssl
 import uuid
 from scripts.check_version import report_latest
 from scripts.source_profiles import load_profiles, create_source_folders, describe_profiles
+from scripts.cases import ensure_registry, init_case
 
 ROOT = Path(__file__).resolve().parent
 SECRET_KEYS = ('ELASTIC_PASSWORD', 'KIBANA_PASSWORD', 'LOGSTASH_PASSWORD',
@@ -40,6 +41,7 @@ def init(*, prepare_sources=True):
     # Local configuration must be valid before credentials or folders are created.
     if prepare_sources:
         profiles = load_profiles(ROOT / 'config/source-profiles.json')
+        ensure_registry(ROOT, profiles)
         create_source_folders(ROOT, profiles)
     env_path = ROOT / '.env'
     if not env_path.exists():
@@ -150,6 +152,7 @@ def up(args, env=None):
     print(f"Ready: http://localhost:{env['KIBANA_PORT']}/app/security (user: elastic)")
     print('Password: .env ELASTIC_PASSWORD. CA: .state/ca.crt. Drop completed files into logs/.')
     print('Source-specific folders: python3 builder.py sources. Testing guide: docs/detection-testing.md')
+    print('Case folders: python3 builder.py case init --name incident001 (apply new cases with up before ingestion).')
 
 
 def smoke(env):
@@ -180,6 +183,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-version-check', action='store_true', help='Skip the informational release lookup')
     sub = parser.add_subparsers(dest='command', required=True)
+    case = sub.add_parser('case', help='사고분석·탐지 테스트용 case 폴더 관리')
+    case_commands = case.add_subparsers(dest='case_command', required=True)
+    case_init = case_commands.add_parser(
+        'init', help='logs와 live-logs에 case별 소스 폴더 생성',
+        description='빈 소스 폴더와 로컬 case 등록 정보만 준비합니다. SIEM 기동이나 로그 주입은 수행하지 않습니다.')
+    case_init.add_argument('--name', required=True, help='case명: 소문자로 시작하는 소문자·숫자·밑줄 1~64자 (예: incident001)')
     sources = sub.add_parser(
         'sources', help='소스별 폴더·인덱스·필드를 확인하는 조회용 명령 (선택 사항)',
         description='sources는 필수 실행 단계가 아닌 조회용 명령입니다.\n'
@@ -210,6 +219,20 @@ def main():
     destroy.add_argument('--purge-secrets', action='store_true', help='Also delete .env and generated local state')
     args = parser.parse_args()
     try:
+        if args.command == 'case':
+            profiles = load_profiles(ROOT / 'config/source-profiles.json')
+            patterns = init_case(ROOT, args.name, profiles)
+            print(f'case 준비 완료: {args.name}')
+            print(f'logs/{args.name}/ 및 live-logs/{args.name}/ 아래에 소스별 빈 폴더 {len(profiles)}개씩 준비했습니다.')
+            print('기존 로그는 보존하며, .env·인증서·컨테이너는 생성하거나 변경하지 않습니다.')
+            print(f'case 분류 필드: lab.case_id = {args.name}')
+            print('case 인덱스 패턴:')
+            for pattern in patterns:
+                print(f'  {pattern}')
+            print(f'다음 up에서 Case {args.name} / Case {args.name} — ingest time 데이터 뷰를 적용합니다.')
+            print('실행 중인 SIEM에도 새 case를 적용하려면 로그를 넣기 전에 up을 다시 실행하세요 (Trial: up --trial).')
+            print('데이터 뷰 선택만으로 탐지 룰의 case 범위가 제한되지는 않습니다. docs/detection-testing.md를 확인하세요.')
+            return
         if args.command == 'sources':
             print(describe_profiles(load_profiles(ROOT / 'config/source-profiles.json'), args.name, args.json))
             return
@@ -257,7 +280,7 @@ def main():
             if args.purge_secrets:
                 (ROOT / '.env').unlink()
                 shutil.rmtree(ROOT / '.state')
-            print('Project containers/network/volumes removed. Original logs/ and live-logs/ retained.')
+            print('Project containers/network/volumes removed. Original logs/, live-logs/ and .cases/ registry retained.')
     except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         sys.exit(1)

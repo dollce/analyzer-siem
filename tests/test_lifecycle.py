@@ -143,6 +143,33 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse((self.root / '.env').exists())
         self.assertFalse((self.root / 'logs').exists())
 
+    def test_case_init_prepares_folders_without_environment_network_or_runtime(self):
+        with patch.object(lab.sys, 'argv', ['builder.py', 'case', 'init', '--name', 'incident001']), \
+             patch.object(lab, 'init') as init, patch.object(lab, 'compose') as compose, \
+             patch.object(lab, 'report_latest') as report, patch('builtins.print'):
+            lab.main()
+        init.assert_not_called()
+        compose.assert_not_called()
+        report.assert_not_called()
+        self.assertFalse((self.root / '.env').exists())
+        self.assertFalse((self.root / '.state').exists())
+        self.assertTrue((self.root / 'logs/incident001/cloud_defend.alerts').is_dir())
+        self.assertTrue((self.root / 'live-logs/incident001/cloud_defend.alerts').is_dir())
+        self.assertEqual(json.loads((self.root / '.cases/registry.json').read_text())['cases'], ['incident001'])
+
+    def test_destroy_with_purges_retains_case_registry_and_source_evidence(self):
+        lab.init()
+        lab.init_case(self.root, 'incident001', lab.load_profiles(self.root / 'config/source-profiles.json'))
+        evidence = self.root / 'logs/incident001/generic/evidence.log'
+        evidence.write_text('original')
+        before = (self.root / '.cases/registry.json').read_bytes()
+        with patch.object(lab.sys, 'argv', ['builder.py', '--no-version-check', 'destroy', '--yes', '--purge-cache', '--purge-secrets']), \
+             patch.object(lab, 'compose'), patch('builtins.print'):
+            lab.main()
+        self.assertEqual(evidence.read_text(), 'original')
+        self.assertEqual((self.root / '.cases/registry.json').read_bytes(), before)
+        self.assertFalse((self.root / '.env').exists())
+
     def test_invalid_profiles_prevent_initialization_side_effects(self):
         (self.root / 'config/source-profiles.json').write_text('{}')
         with self.assertRaises(ValueError):
