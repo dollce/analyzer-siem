@@ -1,0 +1,12 @@
+.env
+.state/
+.cache/
+__pycache__/
+*.pyc
+.DS_Store
+VALIDATION.md
+logs/**
+!logs/.gitkeep
+live-logs/**
+!live-logs/.gitkeep
+
