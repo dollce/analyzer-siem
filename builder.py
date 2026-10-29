@@ -180,9 +180,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-version-check', action='store_true', help='Skip the informational release lookup')
     sub = parser.add_subparsers(dest='command', required=True)
-    sources = sub.add_parser('sources', help='List source folders, target indices and ECS field guidance without starting the lab')
-    sources.add_argument('name', nargs='?', help='Show one source profile, for example cloud_defend.alerts')
-    sources.add_argument('--json', action='store_true', help='Output the validated profile configuration as JSON')
+    sources = sub.add_parser(
+        'sources', help='소스별 폴더·인덱스·필드를 확인하는 조회용 명령 (선택 사항)',
+        description='sources는 필수 실행 단계가 아닌 조회용 명령입니다.\n'
+                    '폴더 생성, SIEM 기동, 로그 주입, 탐지 테스트를 실행하지 않습니다.\n'
+                    '폴더는 저장할 인덱스를 정하고, 룰의 Index patterns는 검색 범위를 정합니다.\n'
+                    'Custom query는 그 범위에 있는 로그의 실제 ECS 필드로 매칭을 판정합니다.',
+        epilog='사용 예시:\n'
+               '  python3 builder.py sources                     전체 소스 조회\n'
+               '  python3 builder.py sources cloud_defend.alerts 특정 소스 조회\n'
+               '  python3 builder.py sources --json              스크립트용 JSON 출력\n'
+               '  python3 builder.py sources --help              도움말 확인',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    sources.add_argument('name', nargs='?', help='조회할 소스 이름 (생략하면 전체, 예: cloud_defend.alerts)')
+    sources.add_argument('--json', action='store_true', help='한글 안내 없이 검증된 프로필 설정만 순수 JSON으로 출력')
     version = sub.add_parser('version', help='Refresh the latest published release notice; never upgrade')
     version.add_argument('--offline', action='store_true', help='Use the existing release cache only')
     for name in ('init', 'check', 'down', 'status', 'smoke', 'rotate-certs'):
