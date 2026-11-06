@@ -129,7 +129,7 @@ def request(env, path, payload=None):
 
 def up(args, env=None):
     env = init() if env is None else env
-    mode = 'trial' if args.trial else env.get('LICENSE_MODE', 'basic')
+    mode = 'trial' if args.trial else env.get('LICENSE_MODE', 'trial')
     if mode not in ('basic', 'trial'):
         raise ValueError('LICENSE_MODE must be basic or trial.')
     sync(args)  # Fail before touching the runtime when fresh upstream is unavailable.
@@ -206,7 +206,7 @@ def main():
     version = sub.add_parser('version', help='Refresh the latest published release notice; never upgrade')
     version.add_argument('--offline', action='store_true', help='Use the existing release cache only')
     for name in ('init', 'check', 'down', 'status', 'smoke', 'rotate-certs'):
-        sub.add_parser(name)
+        sub.add_parser(name, help='Delete project containers and all data volumes; retain original logs' if name == 'down' else None)
     for name in ('up', 'sync-labs'):
         item = sub.add_parser(name)
         item.add_argument('--offline', action='store_true', help='Explicitly reuse a valid existing labs cache')
@@ -261,8 +261,9 @@ def main():
             run(['ruby', str(ROOT / 'tests/test_route.rb')])
             run(['bash', '-n', str(ROOT / 'scripts/certs.sh')])
         elif args.command == 'down':
-            compose('down', '--remove-orphans', timeout=180)
-            print('Stopped; data, offsets, credentials and input logs retained.')
+            compose('down', '--volumes', '--remove-orphans', timeout=180)
+            (ROOT / '.state/ca.crt').unlink(missing_ok=True)
+            print('Project containers/network/volumes removed, including indexed data and collection offsets. Original logs, case registry, credentials and Labs cache retained.')
         elif args.command == 'status':
             compose('ps', '-a')
         elif args.command == 'smoke':

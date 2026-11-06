@@ -18,7 +18,7 @@ x-client: &client
     KIBANA_PASSWORD: ${KIBANA_PASSWORD:?Run init}
     LOGSTASH_PASSWORD: ${LOGSTASH_PASSWORD:?Run init}
     PREBUILT_RULES: ${PREBUILT_RULES:-true}
-    LICENSE_MODE: ${LICENSE_MODE:-basic}
+    LICENSE_MODE: ${LICENSE_MODE:-trial}
   extra_hosts:
     - host.docker.internal:host-gateway
 
