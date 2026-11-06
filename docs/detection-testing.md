@@ -148,7 +148,7 @@ EQL sequence, threshold, new terms, indicator match, ML 룰은 추가 이벤트�
 | 쿼리는 맞지만 Alerts가 없음 | 룰 활성화 여부, 실행 결과, timestamp override, look-back, 예외·suppression·라이선스·외부 의존성 |
 | 파일을 다시 넣었는데 변화 없음 | sincedb가 이미 읽은 파일인지 확인. 완료 파일 재실험은 새 파일로 복사 |
 
-`down`은 데이터와 수집 위치를 유지한다. `destroy --yes`는 lab 인덱스와 수집 위치를 삭제하지만 원본 파일과 `.cases/registry.json`은 남긴다. `--purge-cache --purge-secrets`를 함께 사용해도 case 등록 정보는 보존한다. 다시 시작하면 남아 있는 파일이 같은 case로 재수집되고 데이터 뷰도 재구성된다. 필요 없는 합성 입력은 사용자가 `logs/` 밖으로 옮겨 둔다.
+`down`과 `destroy --yes`는 모든 프로젝트 데이터 볼륨(lab 인덱스, Kibana 저장 객체, 수집 위치, 인증서, 클러스터 라이선스 상태)을 삭제하지만 원본 파일과 `.cases/registry.json`은 남긴다. `--purge-cache --purge-secrets`를 함께 사용해도 case 등록 정보는 보존한다. 다시 시작하면 남아 있는 파일이 같은 case로 재수집되고 데이터 뷰도 재구성된다. 필요 없는 합성 입력은 사용자가 `logs/` 밖으로 옮겨 둔다.
 
 기존 `logs-lab-*`나 소스별 문서는 폴더 구조를 바꿔도 자동 이동하지 않는다. 파일을 같은 파일시스템 안에서 이동하면 inode와 sincedb가 유지되어 다시 읽히지 않을 수 있다. case로 재수집하려면 `up`으로 case를 먼저 적용한 뒤 새로운 파일로 복사하고, 기존 색인 문서와 함께 조회할 때의 중복 여부를 확인한다.
 
@@ -175,7 +175,6 @@ python3 builder.py sources panw.panos
 python3 builder.py case init --name incident001
 python3 builder.py check
 bash scripts/check_logstash.sh
-python3 builder.py down
 python3 builder.py up
 ```
 

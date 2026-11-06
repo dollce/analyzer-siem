@@ -2,7 +2,7 @@
 
 사고분석과 탐지 룰 테스트가 필요할 때 올리고, 분석이 끝나면 지우는 Docker Compose 기반 SIEM.
 Elasticsearch → Kibana → 초기 설정 → Logstash 순서로 구성된다.
-Elasticsearch·Kibana·Logstash는 `9.5.5`로 고정한다. 기본은 **무료 Basic**, 분석에 구독 기능이 필요하면 **Trial을 명시적으로 선택**할 수 있다.
+Elasticsearch·Kibana·Logstash는 `9.5.5`로 고정한다. 기본은 **공식 Trial 요청**이며, 무료 Basic을 쓰려면 `.env`에 `LICENSE_MODE=basic`을 설정한다.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
   init --> kibana
 ```
 
-> 공식 Docker 배포본은 Elastic License 2.0 기반이다. 무료 소스 부분의 AGPLv3 선택권과 공식 배포본의 라이선스는 구분해야 한다. 기본은 무료 Basic이며 Trial은 선택한 경우에만 공식 API로 활성화한다. [공식 라이선스 설명](https://www.elastic.co/pricing/faq/licensing)
+> 공식 Docker 배포본은 Elastic License 2.0 기반이다. 무료 소스 부분의 AGPLv3 선택권과 공식 배포본의 라이선스는 구분해야 한다. 기본 기동은 공식 API로 Trial을 요청하며, Basic은 명시적으로 선택할 수 있다. [공식 라이선스 설명](https://www.elastic.co/pricing/faq/licensing)
 
 ## 1. 준비
 
@@ -56,7 +56,7 @@ python3 builder.py up
 7. Logstash 시작 및 상태 확인
 8. 호스트에서 CA 검증 연결 및 선택한 라이선스 재확인
 
-실패한 단계가 있으면 종료 코드가 0이 아니며, 최초 실행에서는 다음 단계를 시작하지 않는다. 이미 실행 중이던 서비스가 있으면 자동으로 지우지 않는다. 재실행으로 설정을 다시 적용하거나 `down`으로 중지한다.
+실패한 단계가 있으면 종료 코드가 0이 아니며, 최초 실행에서는 다음 단계를 시작하지 않는다. 이미 실행 중이던 서비스가 있으면 자동으로 지우지 않는다. 재실행으로 설정을 다시 적용하거나 `down`으로 컨테이너와 데이터 볼륨을 삭제한다.
 
 | 접속 | 주소 / 계정 |
 | --- | --- |
@@ -69,16 +69,16 @@ python3 builder.py up
 
 비밀번호를 화면에 출력하지 않으므로 `.env`에서 확인한다. `.env` 전체나 `docker compose config`의 전체 출력을 공유하지 않는다.
 
-### Trial 선택
+### 라이선스 선택
 
 ```bash
-# 이 실행에서 공식 Trial 활성화. 이후 재시작에도 같은 옵션 사용
+# 설정이 Basic이어도 이 실행에서는 공식 Trial 요청
 python3 builder.py up --trial
 ```
 
-매번 옵션을 지정하지 않으려면 `.env`에 `LICENSE_MODE=trial`을 설정한다. 기본값은 `basic`이다. 이미 활성화된 Trial은 재사용하고 만료일을 출력한다. Basic 모드로 실행했다고 기존 Trial을 자동으로 다운그레이드하지 않는다.
+기본 `up`은 Trial을 요청한다. `LICENSE_MODE`가 없는 기존 `.env`에도 적용된다. 기존에 `LICENSE_MODE=basic`을 명시했다면 그 선택을 유지하므로 Trial을 쓰려면 `trial`로 변경하거나 `--trial`을 사용한다. 이미 활성화된 Trial은 재사용하고 만료일을 출력한다. Basic 모드로 실행했다고 기존 Trial을 자동으로 다운그레이드하지 않는다.
 
-Trial은 30일 동안 구독 기능을 사용할 수 있으며, 공식 API의 활성화 가능 여부에 따라 동작한다. 같은 클러스터에서는 메이저 버전당 한 번만 활성화할 수 있다. 사용 불가·만료·활성화 거부 시 원인을 출력하고 중단한다. 라이선스 상태를 초기화해서 제한을 우회하거나 Basic으로 조용히 전환하지 않는다. [공식 Trial API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-license-post-start-trial)
+Trial은 30일 동안 구독 기능을 사용할 수 있으며, 공식 API의 활성화 가능 여부에 따라 동작한다. 같은 클러스터에서는 메이저 버전당 한 번만 활성화할 수 있다. 사용 불가·만료·활성화 거부 시 원인을 출력하고 중단한다. Basic으로 조용히 전환하지 않는다. `down`은 클러스터 데이터 볼륨 전체를 삭제하므로 다음 `up`은 새 클러스터에서 자격을 확인한다. 새 Trial의 허용 여부와 만료일은 서버 응답으로 검증한다. [공식 Trial API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-license-post-start-trial)
 
 Trial은 기능을 사용할 수 있는 라이선스를 제공한다. Elastic Agent/Endpoint 등록, ML 작업, 외부 모델 연결, 실제 로그에 맞는 탐지 규칙 활성화까지 자동 구성하는 옵션은 아니다.
 
@@ -184,7 +184,7 @@ Kibana Discover → `Case incident001` 데이터 뷰를 선택한다. 과거 로
 
 Discover에서 case 데이터 뷰를 선택해도 예약 실행되는 탐지 룰의 검색 범위나 시간 설정은 바뀌지 않는다. 테스트 복제본의 인덱스 패턴을 원래 소스와 해당 case를 모두 만족하도록 지정한다. 예: `logs-cloud_defend.alerts-lab-case_incident001-*`. [case별 탐지 테스트 절차](docs/detection-testing.md#3-case별-양성음성-대조-테스트)를 참고한다.
 
-이전 구성에서 업데이트했다면 `python3 builder.py down` 후 `python3 builder.py up`으로 템플릿·권한·데이터 뷰·Logstash 설정을 적용한다. Trial 사용 중이면 `up --trial`을 사용한다. 기존 인덱스와 이미 읽은 파일은 자동 이동·재수집하지 않는다.
+이전 구성에서 데이터 삭제 없이 업데이트하려면 `python3 builder.py up`으로 템플릿·권한·데이터 뷰·Logstash 설정을 적용한다. Trial 사용 중이면 `up --trial`을 사용한다. 기존 인덱스와 이미 읽은 파일은 자동 이동·재수집하지 않는다.
 
 ```bash
 python3 builder.py status
@@ -234,10 +234,10 @@ python3 builder.py up
 ## 5. 중지 / 삭제 / 재사용
 
 ```bash
-# 컨테이너·프로젝트 네트워크 삭제. 데이터와 수집 위치는 유지
+# 컨테이너·프로젝트 네트워크·모든 데이터 볼륨 삭제 (원본 로그는 유지)
 python3 builder.py down
 
-# 최신 Labs와 규칙을 갱신한 뒤 다시 시작
+# 새 클러스터 생성 및 Trial 요청, 최신 Labs와 규칙 적용
 python3 builder.py up
 
 # SIEM 데이터, 인증서, persistent queue, DLQ, sincedb까지 삭제
@@ -250,15 +250,15 @@ python3 builder.py destroy --yes --purge-cache --purge-secrets
 | 항목 | down | destroy | destroy + 두 purge 옵션 |
 | --- | --- | --- | --- |
 | 프로젝트 컨테이너 / 네트워크 | 삭제 | 삭제 | 삭제 |
-| ES 인덱스 / Kibana 저장 객체 | 유지 | 삭제 | 삭제 |
-| Logstash 수집 위치 / queue / DLQ | 유지 | 삭제 | 삭제 |
-| 인증서 볼륨 | 유지 | 삭제 | 삭제 |
+| ES 인덱스 / Kibana 저장 객체 | 삭제 | 삭제 | 삭제 |
+| Logstash 수집 위치 / queue / DLQ | 삭제 | 삭제 | 삭제 |
+| 인증서 볼륨 | 삭제 | 삭제 | 삭제 |
 | `.env` / Labs 캐시 | 유지 | 유지 | 삭제 |
 | `.cases/registry.json` | 유지 | 유지 | 유지 |
 | 원본 `logs/`, `live-logs/` | 유지 | 유지 | 유지 |
 | Docker 이미지 | 유지 | 유지 | 유지 |
 
-원본 로그는 자동 삭제하지 않는다. `destroy` 후 다시 시작하면 남아 있는 원본 로그를 처음부터 다시 읽는다. 일반 `down`/`up`은 sincedb를 재사용하므로 기존 파일의 수집 위치를 이어간다. 완료 파일을 재수집하려면 새 파일로 복사하거나 데이터 삭제 후 재구축한다.
+원본 로그는 자동 삭제하지 않는다. `down` 또는 `destroy` 후 다시 시작하면 수집 위치도 초기화되어 남아 있는 원본 로그를 처음부터 다시 읽는다. 인덱스, Kibana 저장 객체, 인증서 및 클러스터 라이선스 상태는 보존되지 않는다. 삭제 없이 설정을 다시 적용하려면 `up`만 실행한다.
 
 case 등록 정보도 purge 옵션과 관계없이 보존한다. 남아 있는 원본을 다시 시작할 때 같은 case로 수집하고 데이터 뷰를 재구성하기 위해서다. 기존 파일을 case 폴더로 이동해도 이미 색인된 문서는 이동하지 않으며, 같은 inode를 유지한 이동은 sincedb 때문에 다시 읽히지 않을 수 있다.
 

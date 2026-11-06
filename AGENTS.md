@@ -41,7 +41,6 @@ Repository-delivery authorization does not authorize starting a SIEM, initializi
 a lab, enabling/deploying detection rules, or ingesting runtime fixtures or logs.
 Do not request a lab target to complete a code review or compensate for a no-op job.
 Only a separate direct operational request authorizes those actions.
-Never reset licensing state to bypass upstream Trial eligibility.
 
 ## Validation
 

@@ -103,6 +103,37 @@ class LifecycleTests(unittest.TestCase):
         bootstrap = next(call for call in compose.call_args_list if 'bootstrap' in call.args)
         self.assertEqual(bootstrap.kwargs['overrides'], {'LICENSE_MODE': 'trial'})
 
+    def test_default_and_explicit_license_modes(self):
+        for configured, expected in ((None, 'trial'), ('basic', 'basic'), ('trial', 'trial')):
+            with self.subTest(configured=configured):
+                env = lab.init()
+                env.pop('LICENSE_MODE', None)
+                if configured:
+                    env['LICENSE_MODE'] = configured
+                with patch.object(lab, 'sync'), patch.object(lab, 'compose') as compose, \
+                     patch.object(lab, 'request', return_value={'license': {'type': expected, 'status': 'active'}}), \
+                     patch('builtins.print'):
+                    lab.up(types.SimpleNamespace(offline=False, ref=None, trial=False), env=env)
+                phases = [c for c in compose.call_args_list if 'auth' in c.args or 'bootstrap' in c.args]
+                self.assertTrue(all(c.kwargs['overrides'] == {'LICENSE_MODE': expected} for c in phases))
+
+    def test_down_deletes_volumes_and_cached_ca_but_preserves_local_inputs(self):
+        lab.init()
+        preserved = ['logs/generic/evidence.log', 'live-logs/generic/live.log',
+                     '.cases/registry.json', '.env', '.cache/elastic-labs/source.txt']
+        for name in preserved:
+            path = self.root / name
+            if not path.exists():
+                path.write_text('original')
+        before = {name: (self.root / name).read_bytes() for name in preserved}
+        (self.root / '.state/ca.crt').write_text('old CA')
+        with patch.object(lab.sys, 'argv', ['builder.py', '--no-version-check', 'down']), \
+             patch.object(lab, 'compose') as compose, patch('builtins.print'):
+            lab.main()
+        compose.assert_called_once_with('down', '--volumes', '--remove-orphans', timeout=180)
+        self.assertFalse((self.root / '.state/ca.crt').exists())
+        self.assertEqual(before, {name: (self.root / name).read_bytes() for name in preserved})
+
     def test_version_command_does_not_initialize_or_start_lab(self):
         with patch.object(lab.sys, 'argv', ['builder.py', 'version', '--offline']), \
              patch.object(lab, 'report_latest') as report, patch.object(lab, 'compose') as compose:
@@ -189,7 +220,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_up_recreates_logstash_to_reload_bind_mounted_source_profiles(self):
         with patch.object(lab, 'sync'), patch.object(lab, 'compose') as compose, \
-             patch.object(lab, 'request', return_value={'license': {'type': 'basic', 'status': 'active'}}), \
+             patch.object(lab, 'request', return_value={'license': {'type': 'trial', 'status': 'active'}}), \
              patch('builtins.print'):
             lab.up(types.SimpleNamespace(offline=False, ref=None, trial=False))
         logstash = next(call for call in compose.call_args_list if 'logstash' in call.args)

@@ -410,7 +410,7 @@ def main() -> int:
         if not es_url.startswith("https://"):
             raise SetupError("ES_URL must use verified HTTPS")
         password = required_env("ELASTIC_PASSWORD")
-        license_mode = os.environ.get("LICENSE_MODE", "basic").lower()
+        license_mode = os.environ.get("LICENSE_MODE", "trial").lower()
         if license_mode not in ("basic", "trial"):
             raise SetupError("LICENSE_MODE must be basic or trial")
         es = API(es_url, password, os.environ.get("CA_CERT", "/certs/ca/ca.crt"), timeout=120)
